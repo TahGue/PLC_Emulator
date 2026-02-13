@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+tests/
+*.md
+.env
+.env.example
+logs/
+models/
+openplc/
+.git/
+.gitignore
