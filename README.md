@@ -243,6 +243,7 @@ backend/openplc/OPENPLC_FACTORYIO_RUNBOOK.md
 - `POST /analyze` - analyze one telemetry sample
 - `GET /events?limit=20` - recent persisted analysis events
 - `GET /events/stream` - Server-Sent Events feed for live dashboards (Node-RED/Grafana/custom UI)
+- `GET /metrics` - Prometheus text exposition format (counters + gauges)
 
 `POST /analyze` response includes recruiter-friendly ML metadata:
 - `process_components`

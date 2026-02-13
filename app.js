@@ -26,6 +26,8 @@ class BottleFactoryPLC {
         this.activeScenarioKey = 'normal';
         this.eventStreamConnected = false;
         this.lastStreamEventId = 0;
+        this.consecutiveFailures = 0;
+        this.maxBackoffMs = 8000;
         
         this.initializeEventListeners();
         this.initializePLCIntegration();
@@ -487,7 +489,13 @@ class BottleFactoryPLC {
     startBackendHealthChecks() {
         const check = async () => {
             const health = await this.telemetry.checkHealth();
+            const wasOffline = !this.backendOnline;
             this.updateBackendStatus(health.ok);
+
+            if (health.ok && wasOffline) {
+                this.consecutiveFailures = 0;
+                this.hideOfflineBanner();
+            }
         };
 
         check();
@@ -495,12 +503,34 @@ class BottleFactoryPLC {
     }
 
     startTelemetryLoop() {
-        const cycle = async () => {
-            await this.runTelemetryCycle();
+        const schedule = () => {
+            const backoffMs = Math.min(1000 * Math.pow(1.5, this.consecutiveFailures), this.maxBackoffMs);
+            const intervalMs = this.consecutiveFailures > 0 ? backoffMs : 1000;
+            this.telemetryInterval = setTimeout(async () => {
+                await this.runTelemetryCycle();
+                schedule();
+            }, intervalMs);
         };
 
-        cycle();
-        this.telemetryInterval = setInterval(cycle, 1000);
+        this.runTelemetryCycle().then(() => schedule());
+    }
+
+    showOfflineBanner() {
+        let banner = document.getElementById('offline-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'offline-banner';
+            banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#dc2626;color:#fff;text-align:center;padding:6px 12px;font-size:0.85rem;font-weight:600;';
+            banner.textContent = 'Backend offline — telemetry paused, retrying with backoff...';
+            document.body.prepend(banner);
+        }
+    }
+
+    hideOfflineBanner() {
+        const banner = document.getElementById('offline-banner');
+        if (banner) {
+            banner.remove();
+        }
     }
 
     async runTelemetryCycle() {
@@ -537,6 +567,8 @@ class BottleFactoryPLC {
                 reasons: Array.isArray(analysis.reasons) ? analysis.reasons : []
             };
 
+            this.consecutiveFailures = 0;
+            this.hideOfflineBanner();
             this.recordAnalysisStats(latencyMs, this.latestAnalysis.processAnomaly || this.latestAnalysis.networkAlert);
 
             if (this.latestAnalysis.processAnomaly) {
@@ -554,8 +586,14 @@ class BottleFactoryPLC {
             this.pushDetectionEvent(this.latestAnalysis);
             this.updateBackendStatus(true);
         } catch (error) {
+            this.consecutiveFailures += 1;
             this.updateBackendStatus(false);
-            console.warn('Telemetry cycle failed:', error.message);
+
+            if (this.consecutiveFailures >= 3) {
+                this.showOfflineBanner();
+            }
+
+            console.warn(`Telemetry cycle failed (attempt ${this.consecutiveFailures}):`, error.message);
         } finally {
             this.pendingAnalyzeRequest = false;
         }

@@ -201,6 +201,15 @@ SIGNAL_LOCK = threading.Lock()
 LATEST_VISION_SIGNAL: VisionSignalState | None = None
 LATEST_SECURITY_SIGNAL: SecuritySignalState | None = None
 
+METRICS_LOCK = threading.Lock()
+METRICS_COUNTERS: dict[str, int | float] = {
+    "analyses_total": 0,
+    "process_anomalies_total": 0,
+    "network_alerts_total": 0,
+    "vision_signals_ingested": 0,
+    "security_signals_ingested": 0,
+}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -747,6 +756,9 @@ def ingest_vision_signal(payload: VisionSignalPayload) -> dict[str, Any]:
     )
     _set_vision_signal(signal)
 
+    with METRICS_LOCK:
+        METRICS_COUNTERS["vision_signals_ingested"] += 1
+
     return {
         "ok": True,
         "vision_signal": {
@@ -772,6 +784,9 @@ def ingest_security_signal(payload: SecuritySignalPayload) -> dict[str, Any]:
         sample_window_seconds=payload.sample_window_seconds,
     )
     _set_security_signal(signal)
+
+    with METRICS_LOCK:
+        METRICS_COUNTERS["security_signals_ingested"] += 1
 
     return {
         "ok": True,
@@ -831,6 +846,13 @@ def signals() -> dict[str, Any]:
 def analyze(payload: TelemetryPayload) -> dict[str, Any]:
     result = analyze_payload(payload)
     persist_analysis(payload, result)
+
+    with METRICS_LOCK:
+        METRICS_COUNTERS["analyses_total"] += 1
+        if result.process_anomaly:
+            METRICS_COUNTERS["process_anomalies_total"] += 1
+        if result.network_alert:
+            METRICS_COUNTERS["network_alerts_total"] += 1
 
     return {
         "process_anomaly": result.process_anomaly,
@@ -913,6 +935,56 @@ def events(limit: int = 20) -> dict[str, Any]:
     return {"count": len(parsed_rows), "events": parsed_rows}
 
 
+@app.get("/metrics")
+def metrics() -> str:
+    vision = _get_latest_vision_signal()
+    security = _get_latest_security_signal()
+
+    with METRICS_LOCK:
+        counters = dict(METRICS_COUNTERS)
+
+    lines = [
+        "# HELP analyzer_analyses_total Total analysis requests processed.",
+        "# TYPE analyzer_analyses_total counter",
+        f'analyzer_analyses_total {counters["analyses_total"]}',
+        "# HELP analyzer_process_anomalies_total Total process anomaly detections.",
+        "# TYPE analyzer_process_anomalies_total counter",
+        f'analyzer_process_anomalies_total {counters["process_anomalies_total"]}',
+        "# HELP analyzer_network_alerts_total Total network alert detections.",
+        "# TYPE analyzer_network_alerts_total counter",
+        f'analyzer_network_alerts_total {counters["network_alerts_total"]}',
+        "# HELP analyzer_vision_signals_ingested Total vision signals received.",
+        "# TYPE analyzer_vision_signals_ingested counter",
+        f'analyzer_vision_signals_ingested {counters["vision_signals_ingested"]}',
+        "# HELP analyzer_security_signals_ingested Total security signals received.",
+        "# TYPE analyzer_security_signals_ingested counter",
+        f'analyzer_security_signals_ingested {counters["security_signals_ingested"]}',
+        "# HELP analyzer_vision_signal_fresh Whether a fresh vision signal is available.",
+        "# TYPE analyzer_vision_signal_fresh gauge",
+        f"analyzer_vision_signal_fresh {1 if vision and _signal_age_seconds(vision.captured_at) <= VISION_SIGNAL_STALE_SECONDS else 0}",
+        "# HELP analyzer_security_signal_fresh Whether a fresh security signal is available.",
+        "# TYPE analyzer_security_signal_fresh gauge",
+        f"analyzer_security_signal_fresh {1 if security and _signal_age_seconds(security.captured_at) <= SECURITY_SIGNAL_STALE_SECONDS else 0}",
+    ]
+
+    if vision:
+        lines.extend([
+            "# HELP analyzer_vision_anomaly_score Latest vision anomaly score.",
+            "# TYPE analyzer_vision_anomaly_score gauge",
+            f"analyzer_vision_anomaly_score {vision.anomaly_score:.2f}",
+        ])
+
+    if security:
+        lines.extend([
+            "# HELP analyzer_security_packet_rate Latest security packet rate.",
+            "# TYPE analyzer_security_packet_rate gauge",
+            f"analyzer_security_packet_rate {security.packet_rate:.2f}",
+        ])
+
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
 def reset_runtime_state_for_tests() -> None:
     global LATEST_VISION_SIGNAL
     global LATEST_SECURITY_SIGNAL
@@ -920,6 +992,10 @@ def reset_runtime_state_for_tests() -> None:
     with SIGNAL_LOCK:
         LATEST_VISION_SIGNAL = None
         LATEST_SECURITY_SIGNAL = None
+
+    with METRICS_LOCK:
+        for key in METRICS_COUNTERS:
+            METRICS_COUNTERS[key] = 0
 
     FALLBACK_MODEL.production_rate_history.clear()
     FALLBACK_MODEL.reject_rate_history.clear()
