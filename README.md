@@ -102,7 +102,9 @@ bottle-factory-plc/
     ├── scripts/evaluate_mvtec_model.py
     ├── scripts/vision_camera_simulator.py
     ├── scripts/network_security_monitor.py
-    └── scripts/replay_analysis_events.py
+    ├── scripts/replay_analysis_events.py
+    ├── scripts/openplc_modbus_bridge.py
+    └── scripts/README.md
 ```
 
 ## Getting Started (Full MVP)
@@ -154,7 +156,12 @@ python backend/scripts/vision_camera_simulator.py --dataset-root <MVTecRoot> --c
 
 # Feed security lane (use --mode simulate if packet capture permissions are unavailable)
 python backend/scripts/network_security_monitor.py --mode simulate --loop
+
+# Bridge analyzer vision/security lanes to OpenPLC via Modbus TCP
+python backend/scripts/openplc_modbus_bridge.py --openplc-host 127.0.0.1 --openplc-port 502 --process-flag-coil 8 --security-flag-coil 9 --address-base 0
 ```
+
+> The bridge polls `GET /signals` and writes process/security flags to OpenPLC coils, so you can map them to PLC logic equivalent to `I:0/8` and `I:0/9`.
 
 ## Controls
 
