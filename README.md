@@ -39,12 +39,12 @@ All libraries used are free and open source.
 - **Alarm System**: Active alarm management with severity levels
 - **Factory Floor Animation**: Visual representation of the production process
 
-### 🚀 Recruiter-Ready ML Showcase
+### 🚀 ML Showcase
 - **Scenario Lab**: switch between baseline, process drift, network attack, and combined incident
 - **Explainability Panel**: process/network feature contributions with visual bars
 - **Decision Intelligence**: risk level + recommended operational action
 - **Session ML KPIs**: analyses run, anomaly hit rate, average inference latency
-- **Demo Report Export**: one-click JSON export for portfolio evidence
+- **Report Export**: one-click JSON export of session data
 
 ### 🎛️ Control Interface
 - **Start/Stop/Reset Controls**: Full system control
@@ -85,7 +85,7 @@ The system includes 8 pre-programmed ladder logic rungs:
 ```
 bottle-factory-plc/
 ├── docker-compose.yml       # PostgreSQL + analyzer API (Docker)
-├── RECRUITER_DEMO.md        # 3-5 minute recruiter presentation script
+├── DEMO_GUIDE.md            # Step-by-step testing walkthrough
 ├── telemetry-client.js      # Frontend client for analyzer API
 ├── index.html              # Main application interface
 ├── styles.css              # Styling and animations
@@ -245,7 +245,7 @@ backend/openplc/OPENPLC_FACTORYIO_RUNBOOK.md
 - `GET /events/stream` - Server-Sent Events feed for live dashboards (Node-RED/Grafana/custom UI)
 - `GET /metrics` - Prometheus text exposition format (counters + gauges)
 
-`POST /analyze` response includes recruiter-friendly ML metadata:
+`POST /analyze` response includes detailed ML metadata:
 - `process_components`
 - `network_components`
 - `risk_level`
@@ -276,9 +276,9 @@ Script details and flags are documented in:
 backend/scripts/README.md
 ```
 
-## Recruiter Demo
+## Demo Guide
 
-Use @`RECRUITER_DEMO.md` for a concise 3-5 minute walkthrough focused on ML value and engineering depth.
+See `DEMO_GUIDE.md` for a step-by-step testing walkthrough covering all features.
 
 ## Technical Details
 

@@ -24,9 +24,7 @@ jobs:
             --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install dependencies
-        run: |
-          pip install -r backend/requirements-docker.txt
-          pip install httpx
+        run: pip install -r backend/requirements-docker.txt
 
       - name: Compile check (all Python files)
         run: python -m compileall backend/app backend/scripts backend/tests

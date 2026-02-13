@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .ml import load_artifact_metadata
@@ -981,7 +981,6 @@ def metrics() -> str:
             f"analyzer_security_packet_rate {security.packet_rate:.2f}",
         ])
 
-    from fastapi.responses import PlainTextResponse
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
