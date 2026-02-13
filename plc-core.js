@@ -1,0 +1,431 @@
+class PLCCore {
+    constructor() {
+        this.inputs = new Array(16).fill(false);  // I:0/0 to I:0/15
+        this.outputs = new Array(16).fill(false); // O:0/0 to O:0/15
+        this.runMode = false;
+        this.cycleTime = 100; // ms
+        this.scanCount = 0;
+        this.errorState = false;
+        this.emergencyStopActive = false;
+        
+        // Timer and counter arrays
+        this.timers = [];
+        this.counters = [];
+        
+        // Data tables
+        this.dataRegisters = new Array(100).fill(0);
+        
+        // Event callbacks
+        this.onInputChange = [];
+        this.onOutputChange = [];
+        this.onScanComplete = [];
+    }
+    
+    // Input/Output operations
+    setInput(address, value) {
+        const index = this.parseAddress(address);
+        if (index >= 0 && index < this.inputs.length) {
+            const oldValue = this.inputs[index];
+            this.inputs[index] = value;
+            
+            if (oldValue !== value) {
+                this.notifyInputChange(address, value);
+            }
+        }
+    }
+
+    getInput(address) {
+        const index = this.parseAddress(address);
+        if (index >= 0 && index < this.inputs.length) {
+            return this.inputs[index];
+        }
+        return false;
+    }
+    
+    getOutput(address) {
+        const index = this.parseAddress(address);
+        if (index >= 0 && index < this.outputs.length) {
+            return this.outputs[index];
+        }
+        return false;
+    }
+    
+    setOutput(address, value) {
+        const index = this.parseAddress(address);
+        if (index >= 0 && index < this.outputs.length) {
+            const oldValue = this.outputs[index];
+            this.outputs[index] = value;
+            
+            if (oldValue !== value) {
+                this.notifyOutputChange(address, value);
+            }
+        }
+    }
+    
+    parseAddress(address) {
+        // Parse addresses like "I:0/0" or "O:0/7"
+        const match = address.match(/([IO]):(\d+)\/(\d+)/);
+        if (match) {
+            return parseInt(match[3]);
+        }
+        return -1;
+    }
+    
+    // Control operations
+    start() {
+        if (!this.emergencyStopActive && !this.errorState) {
+            this.runMode = true;
+            this.runScanning();
+        }
+    }
+    
+    stop() {
+        this.runMode = false;
+    }
+    
+    triggerEmergencyStop() {
+        this.emergencyStopActive = true;
+        this.runMode = false;
+        this.outputs.fill(false);
+        this.notifyAllOutputsChanged();
+    }
+    
+    reset() {
+        this.emergencyStopActive = false;
+        this.errorState = false;
+        this.scanCount = 0;
+        this.outputs.fill(false);
+        this.timers = [];
+        this.counters = [];
+        this.notifyAllOutputsChanged();
+    }
+    
+    // Main scan cycle
+    runScanning() {
+        if (!this.runMode) return;
+        
+        const startTime = Date.now();
+        
+        try {
+            // Read inputs
+            this.readInputs();
+            
+            // Execute ladder logic
+            this.executeLadderLogic();
+            
+            // Update outputs
+            this.updateOutputs();
+            
+            this.scanCount++;
+            this.notifyScanComplete();
+            
+        } catch (error) {
+            this.errorState = true;
+            this.runMode = false;
+            console.error('PLC Scan Error:', error);
+        }
+        
+        // Calculate next scan time
+        const elapsed = Date.now() - startTime;
+        const nextScan = Math.max(0, this.cycleTime - elapsed);
+        
+        if (this.runMode) {
+            setTimeout(() => this.runScanning(), nextScan);
+        }
+    }
+    
+    readInputs() {
+        // Simulate reading physical inputs
+        // In a real PLC, this would read from hardware
+    }
+    
+    executeLadderLogic() {
+        // Main ladder logic for bottle factory
+
+        const processAnomaly = this.inputs[8];
+        const networkAlert = this.inputs[9];
+        const securityLockout = processAnomaly || networkAlert;
+        this.setOutput('O:0/8', securityLockout);
+        
+        // Rung 1: System control
+        // Emergency stop must be OFF, Start must be ON, and no errors
+        const systemReady = !this.inputs[0] && this.inputs[1] && !this.errorState && !securityLockout;
+        this.setOutput('O:0/6', systemReady); // System ready light
+        
+        // Rung 2: Main conveyor control
+        // Run conveyor when system is ready and no stop button
+        const conveyorRun = systemReady && !this.inputs[2];
+        this.setOutput('O:0/0', conveyorRun); // Conveyor motor
+        
+        // Rung 3: Filler control
+        // Fill when bottle is at filler and level sensor is ready
+        const fillerRun = conveyorRun && this.inputs[3] && this.inputs[6];
+        this.setOutput('O:0/1', fillerRun); // Fill valve
+        
+        // Rung 4: Capper control
+        // Cap when bottle is at capper and caps are available
+        const capperRun = conveyorRun && this.inputs[4] && this.inputs[7];
+        this.setOutput('O:0/2', capperRun); // Capper motor
+        
+        // Rung 5: Quality check
+        // Check when bottle is at quality station
+        const qualityCheck = conveyorRun && this.inputs[5];
+        this.setOutput('O:0/3', qualityCheck); // Quality light
+        
+        // Rung 6: Reject gate control
+        // Activate reject if quality check fails (simulated)
+        const rejectGate = qualityCheck && (Math.random() < 0.1 || processAnomaly);
+        this.setOutput('O:0/4', rejectGate); // Reject gate
+        
+        // Rung 7: Alarm control
+        // Alarm on emergency stop or error state
+        const alarmActive = this.emergencyStopActive || this.errorState || securityLockout;
+        this.setOutput('O:0/5', alarmActive); // Alarm horn
+        
+        // Rung 8: Running light
+        // Running light when system is operating
+        this.setOutput('O:0/7', conveyorRun); // Running light
+    }
+    
+    updateOutputs() {
+        // Simulate writing to physical outputs
+        // In a real PLC, this would write to hardware
+    }
+    
+    // Timer operations
+    createTimer(preset, type = 'TON') {
+        const timer = {
+            id: this.timers.length,
+            preset: preset,
+            accumulated: 0,
+            enabled: false,
+            done: false,
+            type: type // TON (On-delay), TOF (Off-delay), RTO (Retentive)
+        };
+        this.timers.push(timer);
+        return timer.id;
+    }
+    
+    updateTimers() {
+        this.timers.forEach(timer => {
+            if (timer.enabled && !timer.done) {
+                timer.accumulated += this.cycleTime;
+                if (timer.accumulated >= timer.preset) {
+                    timer.done = true;
+                }
+            } else if (!timer.enabled && timer.type === 'TOF') {
+                timer.accumulated -= this.cycleTime;
+                if (timer.accumulated <= 0) {
+                    timer.accumulated = 0;
+                    timer.done = false;
+                }
+            }
+        });
+    }
+    
+    // Counter operations
+    createCounter(preset, type = 'CTU') {
+        const counter = {
+            id: this.counters.length,
+            preset: preset,
+            accumulated: 0,
+            enabled: false,
+            done: false,
+            type: type // CTU (Count Up), CTD (Count Down)
+        };
+        this.counters.push(counter);
+        return counter.id;
+    }
+    
+    incrementCounter(id) {
+        const counter = this.counters[id];
+        if (counter && counter.type === 'CTU') {
+            counter.accumulated++;
+            if (counter.accumulated >= counter.preset) {
+                counter.done = true;
+            }
+        }
+    }
+    
+    // Event notification methods
+    notifyInputChange(address, value) {
+        this.onInputChange.forEach(callback => callback(address, value));
+    }
+    
+    notifyOutputChange(address, value) {
+        this.onOutputChange.forEach(callback => callback(address, value));
+    }
+    
+    notifyAllOutputsChanged() {
+        for (let i = 0; i < this.outputs.length; i++) {
+            this.notifyOutputChange(`O:0/${i}`, this.outputs[i]);
+        }
+    }
+    
+    notifyScanComplete() {
+        this.onScanComplete.forEach(callback => callback(this.scanCount));
+    }
+    
+    // Utility methods
+    getStatus() {
+        return {
+            runMode: this.runMode,
+            errorState: this.errorState,
+            emergencyStop: this.emergencyStopActive,
+            scanCount: this.scanCount,
+            cycleTime: this.cycleTime
+        };
+    }
+    
+    getIOState() {
+        return {
+            inputs: [...this.inputs],
+            outputs: [...this.outputs]
+        };
+    }
+}
+
+// Ladder Logic Instruction Set
+class LadderInstruction {
+    constructor(type, operands) {
+        this.type = type;
+        this.operands = operands;
+    }
+    
+    execute(plc) {
+        switch (this.type) {
+            case 'XIC': // Examine If Closed
+                return plc.getInput(this.operands[0]);
+                
+            case 'XIO': // Examine If Open
+                return !plc.getInput(this.operands[0]);
+                
+            case 'OTE': // Output Energize
+                plc.setOutput(this.operands[0], true);
+                return true;
+                
+            case 'OTL': // Output Latch
+                plc.setOutput(this.operands[0], true);
+                return true;
+                
+            case 'OTU': // Output Unlatch
+                plc.setOutput(this.operands[0], false);
+                return true;
+                
+            case 'TON': // Timer On-Delay
+                // Timer logic would be implemented here
+                return false;
+                
+            case 'CTU': // Count Up
+                // Counter logic would be implemented here
+                return false;
+                
+            default:
+                return false;
+        }
+    }
+}
+
+// Ladder Rung Class
+class LadderRung {
+    constructor(instructions = []) {
+        this.instructions = instructions;
+    }
+    
+    execute(plc) {
+        let result = true;
+        
+        for (let instruction of this.instructions) {
+            if (instruction.type.startsWith('X')) {
+                // Input instruction - evaluate condition
+                const condition = instruction.execute(plc);
+                result = result && condition;
+            } else if (instruction.type.startsWith('O') || instruction.type.startsWith('T') || instruction.type.startsWith('C')) {
+                // Output instruction - execute if condition is true
+                if (result) {
+                    instruction.execute(plc);
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    addInstruction(instruction) {
+        this.instructions.push(instruction);
+    }
+}
+
+// Ladder Program Class
+class LadderProgram {
+    constructor() {
+        this.rungs = [];
+        this.createDefaultProgram();
+    }
+    
+    createDefaultProgram() {
+        // Rung 1: System control
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIO', ['I:0/0']), // Emergency Stop (normally closed)
+            new LadderInstruction('XIC', ['I:0/1']), // Start Button
+            new LadderInstruction('OTE', ['O:0/6'])  // System Ready Light
+        ]));
+        
+        // Rung 2: Conveyor control
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['O:0/6']), // System Ready
+            new LadderInstruction('XIO', ['I:0/2']), // Stop Button (normally closed)
+            new LadderInstruction('OTE', ['O:0/0'])  // Conveyor Motor
+        ]));
+        
+        // Rung 3: Filler control
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['O:0/0']), // Conveyor Running
+            new LadderInstruction('XIC', ['I:0/3']), // Bottle at Filler
+            new LadderInstruction('XIC', ['I:0/6']), // Level Sensor Ready
+            new LadderInstruction('OTE', ['O:0/1'])  // Fill Valve
+        ]));
+        
+        // Rung 4: Capper control
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['O:0/0']), // Conveyor Running
+            new LadderInstruction('XIC', ['I:0/4']), // Bottle at Capper
+            new LadderInstruction('XIC', ['I:0/7']), // Cap Available
+            new LadderInstruction('OTE', ['O:0/2'])  // Capper Motor
+        ]));
+        
+        // Rung 5: Quality check
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['O:0/0']), // Conveyor Running
+            new LadderInstruction('XIC', ['I:0/5']), // Bottle at Quality
+            new LadderInstruction('OTE', ['O:0/3'])  // Quality Light
+        ]));
+        
+        // Rung 6: Reject gate
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['O:0/3']), // Quality Check Active
+            // Additional logic for reject condition would go here
+            new LadderInstruction('OTE', ['O:0/4'])  // Reject Gate
+        ]));
+        
+        // Rung 7: Alarm control
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['I:0/0']), // Emergency Stop
+            new LadderInstruction('OTE', ['O:0/5'])  // Alarm Horn
+        ]));
+        
+        // Rung 8: Running light
+        this.rungs.push(new LadderRung([
+            new LadderInstruction('XIC', ['O:0/0']), // Conveyor Running
+            new LadderInstruction('OTE', ['O:0/7'])  // Running Light
+        ]));
+    }
+    
+    execute(plc) {
+        this.rungs.forEach(rung => rung.execute(plc));
+    }
+    
+    addRung(rung) {
+        this.rungs.push(rung);
+    }
+}

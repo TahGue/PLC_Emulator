@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bottle-factory-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: plc_emulator
+      POSTGRES_USER: plc
+      POSTGRES_PASSWORD: plc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plc -d plc_emulator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  analyzer:
+    build:
+      context: ./backend
+    container_name: bottle-factory-analyzer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://plc:plc@postgres:5432/plc_emulator
+      API_HOST: 0.0.0.0
+      API_PORT: 8001
+    ports:
+      - "8001:8001"
+
+volumes:
+  pgdata:
