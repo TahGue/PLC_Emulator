@@ -1,0 +1,38 @@
+{
+  "description": "Example OpenPLC/Factory I/O mapping for AI process + security lanes",
+  "address_base": 0,
+  "coils": {
+    "8": {
+      "name": "AI_PROCESS_ANOMALY_FLAG",
+      "maps_to": "I:0/8",
+      "source": "openplc_modbus_bridge"
+    },
+    "9": {
+      "name": "NETWORK_SECURITY_FLAG",
+      "maps_to": "I:0/9",
+      "source": "openplc_modbus_bridge"
+    },
+    "16": {
+      "name": "BRIDGE_HEARTBEAT",
+      "maps_to": "optional",
+      "source": "openplc_modbus_bridge"
+    }
+  },
+  "holding_registers": {
+    "100": {
+      "name": "AI_PROCESS_SCORE_0_100",
+      "source": "openplc_modbus_bridge"
+    },
+    "101": {
+      "name": "SECURITY_SCORE_0_100",
+      "source": "openplc_modbus_bridge"
+    }
+  },
+  "outputs": {
+    "8": {
+      "name": "SECURITY_LOCKOUT_OUTPUT",
+      "maps_to": "O:0/8",
+      "read_by": "openplc_runtime_validator"
+    }
+  }
+}

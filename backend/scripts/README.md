@@ -75,3 +75,24 @@ Useful flags:
 - `--dry-run`: validate analyzer polling and flag derivation without Modbus writes.
 - `--on-fetch-error clear`: clears outputs when analyzer is unreachable (default is `hold-last`).
 - `--address-base 1`: use one-based Modbus addresses if your OpenPLC mapping UI is one-based.
+
+## 7) Validate OpenPLC lockout runtime behavior
+
+```bash
+python backend/scripts/openplc_runtime_validator.py \
+  --openplc-host 127.0.0.1 \
+  --openplc-port 502 \
+  --process-flag-address 8 \
+  --security-flag-address 9 \
+  --lockout-address 8 \
+  --address-base 0 \
+  --report-json backend/logs/openplc_validation_report.json
+```
+
+This runs baseline/process/security/combined scenarios and verifies that lockout output follows expected behavior.
+
+Example tag map reference:
+
+```text
+backend/openplc/tag_mapping.example.json
+```

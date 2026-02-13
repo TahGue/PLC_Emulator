@@ -104,7 +104,9 @@ bottle-factory-plc/
     ├── scripts/network_security_monitor.py
     ├── scripts/replay_analysis_events.py
     ├── scripts/openplc_modbus_bridge.py
-    └── scripts/README.md
+    ├── scripts/openplc_runtime_validator.py
+    ├── scripts/README.md
+    └── openplc/tag_mapping.example.json
 ```
 
 ## Getting Started (Full MVP)
@@ -159,9 +161,18 @@ python backend/scripts/network_security_monitor.py --mode simulate --loop
 
 # Bridge analyzer vision/security lanes to OpenPLC via Modbus TCP
 python backend/scripts/openplc_modbus_bridge.py --openplc-host 127.0.0.1 --openplc-port 502 --process-flag-coil 8 --security-flag-coil 9 --address-base 0
+
+# Validate lockout behavior in OpenPLC runtime (process/security/combined cases)
+python backend/scripts/openplc_runtime_validator.py --openplc-host 127.0.0.1 --openplc-port 502 --process-flag-address 8 --security-flag-address 9 --lockout-address 8 --address-base 0 --report-json backend/logs/openplc_validation_report.json
 ```
 
 > The bridge polls `GET /signals` and writes process/security flags to OpenPLC coils, so you can map them to PLC logic equivalent to `I:0/8` and `I:0/9`.
+
+Detailed OpenPLC + Factory I/O + Beremiz runbook:
+
+```text
+backend/openplc/OPENPLC_FACTORYIO_RUNBOOK.md
+```
 
 ## Controls
 
