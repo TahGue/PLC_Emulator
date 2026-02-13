@@ -102,6 +102,7 @@ bottle-factory-plc/
     ├── scripts/evaluate_mvtec_model.py
     ├── scripts/vision_camera_simulator.py
     ├── scripts/network_security_monitor.py
+    ├── scripts/network_attack_injector.py
     ├── scripts/replay_analysis_events.py
     ├── scripts/openplc_modbus_bridge.py
     ├── scripts/openplc_runtime_validator.py
@@ -160,6 +161,9 @@ python backend/scripts/vision_camera_simulator.py --dataset-root <MVTecRoot> --c
 
 # Feed security lane (use --mode simulate if packet capture permissions are unavailable)
 python backend/scripts/network_security_monitor.py --mode simulate --loop
+
+# Inject manual attack traffic to validate security lane detection
+python backend/scripts/network_attack_injector.py --target-host 127.0.0.1 --target-port 502 --duration-seconds 8 --burst-rate 120 --payload-mode modbus-illegal-function --check-analyzer --require-security-flag --report-json backend/logs/network_attack_report.json
 
 # Bridge analyzer vision/security lanes to OpenPLC via Modbus TCP
 python backend/scripts/openplc_modbus_bridge.py --openplc-host 127.0.0.1 --openplc-port 502 --process-flag-coil 8 --security-flag-coil 9 --address-base 0

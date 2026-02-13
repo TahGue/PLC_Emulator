@@ -99,6 +99,22 @@ This executes four cases (`baseline`, `process_only`, `security_only`, `combined
 
 ## 8) Validate full E2E scenarios (with optional OpenPLC check)
 
+Manual packet-injection attack simulation:
+
+```bash
+python backend/scripts/network_attack_injector.py \
+  --target-host 127.0.0.1 \
+  --target-port 502 \
+  --duration-seconds 8 \
+  --burst-rate 120 \
+  --payload-mode modbus-illegal-function \
+  --check-analyzer \
+  --require-security-flag \
+  --report-json backend/logs/network_attack_report.json
+```
+
+If this does not raise the security lane, verify `network_security_monitor.py` is running in sniff mode with suitable baseline thresholds.
+
 Analyzer-only:
 
 ```bash

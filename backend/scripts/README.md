@@ -48,6 +48,20 @@ python backend/scripts/network_security_monitor.py --mode sniff --loop
 
 > On Windows, sniff mode typically needs Npcap + elevated privileges.
 
+### Manual packet-injection attack simulation
+
+```bash
+python backend/scripts/network_attack_injector.py \
+  --target-host 127.0.0.1 \
+  --target-port 502 \
+  --duration-seconds 8 \
+  --burst-rate 120 \
+  --payload-mode modbus-illegal-function \
+  --check-analyzer \
+  --require-security-flag \
+  --report-json backend/logs/network_attack_report.json
+```
+
 ## 5) Replay prior analyzer CSV events
 
 ```bash
