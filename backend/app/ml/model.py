@@ -19,11 +19,25 @@ def load_artifact_metadata(artifact_path: str | None) -> dict[str, Any] | None:
     if not path.exists() or not path.is_file():
         return None
 
+    if path.suffix.lower() in {".pt", ".pth"}:
+        try:
+            from .torch_autoencoder import load_torch_artifact_metadata
+        except Exception:
+            return None
+
+        return load_torch_artifact_metadata(str(path))
+
     try:
         with path.open("rb") as handle:
             artifact = pickle.load(handle)
     except Exception:
-        return None
+        # Fallback: attempt torch metadata for unknown artifact extension.
+        try:
+            from .torch_autoencoder import load_torch_artifact_metadata
+        except Exception:
+            return None
+
+        return load_torch_artifact_metadata(str(path))
 
     metadata = artifact.get("metadata", {}) if isinstance(artifact, dict) else {}
     if not isinstance(metadata, dict):

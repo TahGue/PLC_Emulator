@@ -98,6 +98,7 @@ bottle-factory-plc/
     ├── requirements.txt
     ├── app/main.py         # FastAPI anomaly + security analyzer
     ├── app/ml/model.py     # Lightweight MVTec feature-model helpers
+    ├── app/ml/torch_autoencoder.py  # PyTorch conv-autoencoder anomaly model
     ├── scripts/train_mvtec_model.py
     ├── scripts/evaluate_mvtec_model.py
     ├── scripts/vision_camera_simulator.py
@@ -151,13 +152,16 @@ http://localhost:8000/index.html
 Use these once you have a trained model artifact and MVTec dataset downloaded.
 
 ```bash
-# Train model (good images only)
+# Train model (good images only) — feature OCSVM (default, CPU-only)
 python backend/scripts/train_mvtec_model.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl
 
-# Evaluate on test split
+# Train model — torch convolutional autoencoder (GPU-accelerated)
+python backend/scripts/train_mvtec_model.py --dataset-root <MVTecRoot> --category bottle --model-type torch-autoencoder --artifact-path backend/models/mvtec_torch_autoencoder.pt --epochs 8 --device auto
+
+# Evaluate on test split (artifact type auto-detected by extension)
 python backend/scripts/evaluate_mvtec_model.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl
 
-# Feed camera/model outputs to backend
+# Feed camera/model outputs to backend (works with both .pkl and .pt artifacts)
 python backend/scripts/vision_camera_simulator.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl --include-good --loop
 
 # Feed security lane (use --mode simulate if packet capture permissions are unavailable)

@@ -14,7 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import requests
 
-from app.ml import load_artifact, score_image
+from app.ml import load_artifact, load_torch_artifact, score_image, score_torch_image
 
 
 SUPPORTED_EXTENSIONS = ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp")
@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--interval-seconds", type=float, default=1.0)
     parser.add_argument("--max-images", type=int, default=0, help="Limit images to send (0 = all)")
     parser.add_argument("--timeout-seconds", type=float, default=3.0)
+    parser.add_argument("--device", default="auto", help="Torch device (auto/cpu/cuda) for autoencoder artifacts")
     return parser.parse_args()
 
 
@@ -94,8 +95,17 @@ def _post_vision_signal(
 def main() -> None:
     args = parse_args()
 
-    artifact = load_artifact(args.artifact_path)
-    model_version = str(artifact.get("metadata", {}).get("model_version", "mvtec-feature-ocsvm-v1"))
+    artifact_path_obj = Path(args.artifact_path)
+    is_torch = artifact_path_obj.suffix.lower() in {".pt", ".pth"}
+
+    if is_torch:
+        loaded = load_torch_artifact(args.artifact_path, device=args.device)
+        model_version = str(loaded.get("metadata", {}).get("model_version", "mvtec-torch-autoencoder-v1"))
+        _score_fn = lambda path: score_torch_image(loaded, str(path))
+    else:
+        artifact = load_artifact(args.artifact_path)
+        model_version = str(artifact.get("metadata", {}).get("model_version", "mvtec-feature-ocsvm-v1"))
+        _score_fn = lambda path: score_image(artifact, str(path))
 
     image_paths = _collect_image_paths(
         dataset_root=Path(args.dataset_root),
@@ -116,7 +126,7 @@ def main() -> None:
     with requests.Session() as session:
         for image_path in sequence:
             started = time.perf_counter()
-            score = score_image(artifact, str(image_path))
+            score = _score_fn(image_path)
             inference_ms = (time.perf_counter() - started) * 1000.0
 
             _post_vision_signal(

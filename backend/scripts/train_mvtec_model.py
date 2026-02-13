@@ -8,7 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.ml import save_artifact, train_mvtec_feature_model
+from app.ml import (
+    save_artifact,
+    save_torch_artifact,
+    train_mvtec_feature_model,
+    train_torch_autoencoder,
+)
 
 
 def _collect_good_images(dataset_root: Path, category: str) -> list[str]:
@@ -28,9 +33,14 @@ def _collect_good_images(dataset_root: Path, category: str) -> list[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train lightweight MVTec feature anomaly model")
+    parser = argparse.ArgumentParser(description="Train MVTec anomaly model (feature OCSVM or torch autoencoder)")
     parser.add_argument("--dataset-root", required=True, help="Path to MVTec AD dataset root")
     parser.add_argument("--category", default="bottle", help="MVTec category folder (default: bottle)")
+    parser.add_argument(
+        "--model-type",
+        choices=["feature-ocsvm", "torch-autoencoder"],
+        default="feature-ocsvm",
+    )
     parser.add_argument(
         "--artifact-path",
         default="./models/mvtec_feature_model.pkl",
@@ -38,9 +48,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model-version", default="mvtec-feature-ocsvm-v1")
     parser.add_argument("--max-samples", type=int, default=0, help="Limit number of good images (0 = all)")
+
+    # Feature OCSVM args
     parser.add_argument("--nu", type=float, default=0.05)
     parser.add_argument("--gamma", default="scale")
     parser.add_argument("--threshold-quantile", type=float, default=0.98)
+
+    # Torch autoencoder args
+    parser.add_argument("--epochs", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--image-size", type=int, default=128)
+    parser.add_argument("--device", default="auto")
+
     return parser.parse_args()
 
 
@@ -55,23 +75,44 @@ def main() -> None:
     if args.max_samples > 0:
         image_paths = image_paths[: args.max_samples]
 
-    artifact = train_mvtec_feature_model(
-        image_paths,
-        model_version=args.model_version,
-        nu=args.nu,
-        gamma=args.gamma,
-        threshold_quantile=args.threshold_quantile,
-    )
+    artifact_path = args.artifact_path
+    if args.model_type == "torch-autoencoder" and artifact_path == "./models/mvtec_feature_model.pkl":
+        artifact_path = "./models/mvtec_torch_autoencoder.pt"
 
-    save_artifact(artifact, args.artifact_path)
+    if args.model_type == "torch-autoencoder":
+        artifact = train_torch_autoencoder(
+            image_paths,
+            model_version=args.model_version,
+            image_size=args.image_size,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            threshold_quantile=args.threshold_quantile,
+            device=args.device,
+        )
+        save_torch_artifact(artifact, artifact_path)
+    else:
+        artifact = train_mvtec_feature_model(
+            image_paths,
+            model_version=args.model_version,
+            nu=args.nu,
+            gamma=args.gamma,
+            threshold_quantile=args.threshold_quantile,
+        )
+        save_artifact(artifact, artifact_path)
 
     metadata = artifact.get("metadata", {})
     print("Training complete")
+    print(f"  Model type: {args.model_type}")
     print(f"  Samples: {len(image_paths)}")
-    print(f"  Artifact: {Path(args.artifact_path).resolve()}")
+    print(f"  Artifact: {Path(artifact_path).resolve()}")
     print(f"  Model version: {metadata.get('model_version')}")
     print(f"  Threshold: {metadata.get('threshold')}")
-    print(f"  Feature dim: {metadata.get('feature_dim')}")
+    if args.model_type == "torch-autoencoder":
+        print(f"  Device: {metadata.get('device')}")
+        print(f"  Final train loss: {metadata.get('final_train_loss')}")
+    else:
+        print(f"  Feature dim: {metadata.get('feature_dim')}")
 
 
 if __name__ == "__main__":

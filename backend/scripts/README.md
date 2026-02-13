@@ -4,6 +4,8 @@ These scripts support the model + signal lanes used by the analyzer API.
 
 ## 1) Train a lightweight MVTec model artifact
 
+### Feature OCSVM (default, CPU-only, fast)
+
 ```bash
 python backend/scripts/train_mvtec_model.py \
   --dataset-root <MVTecRoot> \
@@ -11,7 +13,24 @@ python backend/scripts/train_mvtec_model.py \
   --artifact-path backend/models/mvtec_feature_model.pkl
 ```
 
+### Torch convolutional autoencoder (GPU-accelerated)
+
+```bash
+python backend/scripts/train_mvtec_model.py \
+  --dataset-root <MVTecRoot> \
+  --category bottle \
+  --model-type torch-autoencoder \
+  --artifact-path backend/models/mvtec_torch_autoencoder.pt \
+  --model-version mvtec-torch-autoencoder-v1 \
+  --epochs 8 \
+  --batch-size 16 \
+  --image-size 128 \
+  --device auto
+```
+
 ## 2) Evaluate the artifact on MVTec test split
+
+Both artifact types are auto-detected by file extension (`.pkl` vs `.pt`/`.pth`).
 
 ```bash
 python backend/scripts/evaluate_mvtec_model.py \
@@ -21,7 +40,20 @@ python backend/scripts/evaluate_mvtec_model.py \
   --report-path backend/models/mvtec_eval_report.json
 ```
 
+Torch autoencoder evaluation:
+
+```bash
+python backend/scripts/evaluate_mvtec_model.py \
+  --dataset-root <MVTecRoot> \
+  --category bottle \
+  --artifact-path backend/models/mvtec_torch_autoencoder.pt \
+  --report-path backend/models/mvtec_torch_eval_report.json \
+  --device auto
+```
+
 ## 3) Send model outputs as vision lane signal
+
+Feature OCSVM artifact:
 
 ```bash
 python backend/scripts/vision_camera_simulator.py \
@@ -30,6 +62,18 @@ python backend/scripts/vision_camera_simulator.py \
   --artifact-path backend/models/mvtec_feature_model.pkl \
   --include-good \
   --loop
+```
+
+Torch autoencoder artifact:
+
+```bash
+python backend/scripts/vision_camera_simulator.py \
+  --dataset-root <MVTecRoot> \
+  --category bottle \
+  --artifact-path backend/models/mvtec_torch_autoencoder.pt \
+  --include-good \
+  --loop \
+  --device auto
 ```
 
 ## 4) Send network lane signal

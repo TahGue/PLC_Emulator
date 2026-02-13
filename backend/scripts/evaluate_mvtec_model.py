@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
-from app.ml import load_artifact, score_image
+from app.ml import load_artifact, load_torch_artifact, score_image, score_torch_image
 
 
 SUPPORTED_EXTENSIONS = ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp")
@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-good", type=int, default=0, help="Limit good test samples (0 = all)")
     parser.add_argument("--max-defect", type=int, default=0, help="Limit defect test samples (0 = all)")
+    parser.add_argument("--device", default="auto", help="Torch device (auto/cpu/cuda) for autoencoder artifacts")
     return parser.parse_args()
 
 
@@ -51,8 +52,18 @@ def main() -> None:
     if not test_root.exists():
         raise FileNotFoundError(f"Could not find expected test directory: {test_root}")
 
-    artifact = load_artifact(args.artifact_path)
-    metadata = artifact.get("metadata", {})
+    artifact_path_obj = Path(args.artifact_path)
+    is_torch = artifact_path_obj.suffix.lower() in {".pt", ".pth"}
+
+    if is_torch:
+        loaded = load_torch_artifact(args.artifact_path, device=args.device)
+        artifact = loaded
+        metadata = loaded.get("metadata", {})
+        _score_fn = lambda path: score_torch_image(loaded, str(path))
+    else:
+        artifact = load_artifact(args.artifact_path)
+        metadata = artifact.get("metadata", {})
+        _score_fn = lambda path: score_image(artifact, str(path))
 
     good_paths = _collect_images(test_root / "good")
     defect_paths: list[Path] = []
@@ -76,12 +87,12 @@ def main() -> None:
     y_pred: list[int] = []
 
     for path in good_paths:
-        score = score_image(artifact, str(path))
+        score = _score_fn(path)
         y_true.append(0)
         y_pred.append(1 if bool(score["defect_flag"]) else 0)
 
     for path in defect_paths:
-        score = score_image(artifact, str(path))
+        score = _score_fn(path)
         y_true.append(1)
         y_pred.append(1 if bool(score["defect_flag"]) else 0)
 
