@@ -327,11 +327,14 @@ This emulator is designed for:
 
 ## Open-Source Stack
 
-- Frontend: vanilla HTML/CSS/JavaScript
-- API: FastAPI + Uvicorn
-- Database: PostgreSQL
-- Driver: psycopg3
-- Runtime: Docker Compose
+- **Frontend**: vanilla HTML/CSS/JavaScript + SSE EventSource
+- **API**: FastAPI + Uvicorn
+- **Database**: PostgreSQL (psycopg3)
+- **ML**: scikit-learn (One-Class SVM) + PyTorch (conv-autoencoder) + OpenCV
+- **OT Protocols**: Modbus TCP (pymodbus), Scapy packet capture
+- **Monitoring** (optional): Grafana + Prometheus (`docker-compose.grafana.yml`)
+- **Runtime**: Docker Compose
+- **CI**: GitHub Actions
 
 ## Troubleshooting
 

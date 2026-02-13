@@ -1,0 +1,37 @@
+# Optional Grafana + Prometheus overlay for monitoring the analyzer.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.grafana.yml up --build
+#
+# Grafana UI:  http://localhost:3000  (admin / admin)
+# Prometheus:  http://localhost:9090
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: bottle-factory-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+
+  grafana:
+    image: grafana/grafana-oss:10.4.2
+    container_name: bottle-factory-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafdata:/var/lib/grafana
+
+volumes:
+  promdata:
+  grafdata:

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -186,7 +188,13 @@ class OnlineAnomalyModel:
         return ml_score, reasons
 
 
-app = FastAPI(title="Bottle Factory Analyzer API", version="1.1.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Bottle Factory Analyzer API", version="1.1.0", lifespan=lifespan)
 FALLBACK_MODEL = OnlineAnomalyModel()
 
 SIGNAL_LOCK = threading.Lock()
@@ -323,11 +331,6 @@ def init_db() -> None:
 
             for statement in migration_statements:
                 cur.execute(statement)
-
-
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
 
 
 def _resolve_process_lane(payload: TelemetryPayload) -> ProcessLaneResult:

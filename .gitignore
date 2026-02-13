@@ -20,6 +20,9 @@ backend/models/*.pkl
 backend/models/*.pt
 backend/models/*.pth
 
+# Test / cache
+.pytest_cache/
+
 # IDE
 .vscode/
 .idea/
