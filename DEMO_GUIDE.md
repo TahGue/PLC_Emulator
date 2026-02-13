@@ -105,3 +105,13 @@ python -m http.server 8090 --directory backend/dashboard
 cd backend
 PYTHONPATH=. python -m pytest tests/ -v
 ```
+
+## 11) Full-stack smoke test
+
+With Docker Compose running:
+
+```bash
+python scripts/smoke_test.py
+```
+
+This hits every API endpoint and verifies the full stack (Postgres + Analyzer) is working end-to-end.
