@@ -97,7 +97,30 @@ python backend/scripts/openplc_runtime_validator.py \
 
 This executes four cases (`baseline`, `process_only`, `security_only`, `combined`) and exits non-zero on failure.
 
-## 8) Troubleshooting
+## 8) Validate full E2E scenarios (with optional OpenPLC check)
+
+Analyzer-only:
+
+```bash
+python backend/scripts/e2e_scenario_validator.py \
+  --api-base-url http://localhost:8001 \
+  --report-json backend/logs/e2e_scenario_report.json
+```
+
+Analyzer + OpenPLC lockout verification:
+
+```bash
+python backend/scripts/e2e_scenario_validator.py \
+  --api-base-url http://localhost:8001 \
+  --check-openplc \
+  --openplc-host 127.0.0.1 \
+  --openplc-port 502 \
+  --openplc-lockout-coil-address 8 \
+  --address-base 0 \
+  --report-json backend/logs/e2e_scenario_report.json
+```
+
+## 9) Troubleshooting
 
 - **Connection refused/timeouts**: verify OpenPLC runtime is reachable and Modbus port is open.
 - **No tag updates**: check address base mismatch (`0` vs `1`).

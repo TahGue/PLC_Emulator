@@ -96,3 +96,26 @@ Example tag map reference:
 ```text
 backend/openplc/tag_mapping.example.json
 ```
+
+## 8) Validate full E2E scenarios (baseline/defect/attack/combined)
+
+Analyzer-only verification:
+
+```bash
+python backend/scripts/e2e_scenario_validator.py \
+  --api-base-url http://localhost:8001 \
+  --report-json backend/logs/e2e_scenario_report.json
+```
+
+Analyzer + OpenPLC lockout verification:
+
+```bash
+python backend/scripts/e2e_scenario_validator.py \
+  --api-base-url http://localhost:8001 \
+  --check-openplc \
+  --openplc-host 127.0.0.1 \
+  --openplc-port 502 \
+  --openplc-lockout-coil-address 8 \
+  --address-base 0 \
+  --report-json backend/logs/e2e_scenario_report.json
+```

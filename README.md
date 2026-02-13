@@ -105,8 +105,10 @@ bottle-factory-plc/
     ├── scripts/replay_analysis_events.py
     ├── scripts/openplc_modbus_bridge.py
     ├── scripts/openplc_runtime_validator.py
+    ├── scripts/e2e_scenario_validator.py
     ├── scripts/README.md
-    └── openplc/tag_mapping.example.json
+    ├── openplc/tag_mapping.example.json
+    └── openplc/OPENPLC_FACTORYIO_RUNBOOK.md
 ```
 
 ## Getting Started (Full MVP)
@@ -164,6 +166,9 @@ python backend/scripts/openplc_modbus_bridge.py --openplc-host 127.0.0.1 --openp
 
 # Validate lockout behavior in OpenPLC runtime (process/security/combined cases)
 python backend/scripts/openplc_runtime_validator.py --openplc-host 127.0.0.1 --openplc-port 502 --process-flag-address 8 --security-flag-address 9 --lockout-address 8 --address-base 0 --report-json backend/logs/openplc_validation_report.json
+
+# Validate full E2E scenarios (baseline/defect/network/combined)
+python backend/scripts/e2e_scenario_validator.py --api-base-url http://localhost:8001 --report-json backend/logs/e2e_scenario_report.json
 ```
 
 > The bridge polls `GET /signals` and writes process/security flags to OpenPLC coils, so you can map them to PLC logic equivalent to `I:0/8` and `I:0/9`.
