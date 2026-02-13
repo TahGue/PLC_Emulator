@@ -26,7 +26,8 @@ All libraries used are free and open source.
 - **Process anomaly lane** wired to `I:0/8`
 - **Network security lane** wired to `I:0/9`
 - **Security lockout output** on `O:0/8`
-- **Scoring backend** (FastAPI): combines rule-based checks with lightweight online anomaly model (z-score drift)
+- **Scoring backend** (FastAPI): combines rule-based checks with model-backed vision signals + fallback drift lane
+- **Signal ingest APIs** for external camera and network-monitor sidecars (`/signals/vision`, `/signals/security`)
 - **Event persistence** in PostgreSQL for replay/debug analysis
 
 ### 📊 Visualization & Monitoring
@@ -95,7 +96,13 @@ bottle-factory-plc/
 └── backend/
     ├── Dockerfile
     ├── requirements.txt
-    └── app/main.py         # FastAPI anomaly + security analyzer
+    ├── app/main.py         # FastAPI anomaly + security analyzer
+    ├── app/ml/model.py     # Lightweight MVTec feature-model helpers
+    ├── scripts/train_mvtec_model.py
+    ├── scripts/evaluate_mvtec_model.py
+    ├── scripts/vision_camera_simulator.py
+    ├── scripts/network_security_monitor.py
+    └── scripts/replay_analysis_events.py
 ```
 
 ## Getting Started (Full MVP)
@@ -130,6 +137,24 @@ http://localhost:8000/index.html
 2. Watch conveyor/filler/capper/quality stations
 3. Observe AI + network scores and I/O points (`I:0/8`, `I:0/9`, `O:0/8`)
 4. Trigger stop/reset/emergency to test lockouts and alarm behavior
+
+### 4) (Optional) Run vision + security sidecars
+
+Use these once you have a trained model artifact and MVTec dataset downloaded.
+
+```bash
+# Train model (good images only)
+python backend/scripts/train_mvtec_model.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl
+
+# Evaluate on test split
+python backend/scripts/evaluate_mvtec_model.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl
+
+# Feed camera/model outputs to backend
+python backend/scripts/vision_camera_simulator.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl --include-good --loop
+
+# Feed security lane (use --mode simulate if packet capture permissions are unavailable)
+python backend/scripts/network_security_monitor.py --mode simulate --loop
+```
 
 ## Controls
 
@@ -176,6 +201,9 @@ http://localhost:8000/index.html
 ## Analyzer API
 
 - `GET /health` - backend + DB health
+- `POST /signals/vision` - ingest latest model/camera anomaly signal
+- `POST /signals/security` - ingest latest network monitor signal
+- `GET /signals` - inspect latest cached vision/security lanes
 - `POST /analyze` - analyze one telemetry sample
 - `GET /events?limit=20` - recent persisted analysis events
 
@@ -185,8 +213,30 @@ http://localhost:8000/index.html
 - `risk_level`
 - `recommended_action`
 - `model_version`
+- `vision_anomaly_score`
+- `vision_defect_flag`
+- `security_flag`
+- `process_source` / `network_source`
 
 The analyzer writes each event into `analysis_events` table in PostgreSQL.
+
+When CSV logging is enabled (`ENABLE_CSV_LOGGING=true`), the backend appends replayable events to:
+
+```text
+backend/logs/analysis_events.csv
+```
+
+Replay utility:
+
+```bash
+python backend/scripts/replay_analysis_events.py --csv-path backend/logs/analysis_events.csv --limit 50
+```
+
+Script details and flags are documented in:
+
+```text
+backend/scripts/README.md
+```
 
 ## Recruiter Demo
 

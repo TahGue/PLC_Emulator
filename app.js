@@ -144,7 +144,14 @@ class BottleFactoryPLC {
             networkComponents: {},
             riskLevel: 'low',
             recommendedAction: 'Continue baseline monitoring.',
-            modelVersion: 'hybrid-rule-zscore-v1.1',
+            modelVersion: 'hybrid-vision-signal-v2',
+            processSource: 'telemetry',
+            networkSource: 'telemetry',
+            securityFlag: false,
+            visionAnomalyScore: 0,
+            visionDefectFlag: false,
+            visionInferenceMs: 0,
+            scanTimeMs: 0,
             reasons: []
         };
     }
@@ -451,7 +458,14 @@ class BottleFactoryPLC {
                 networkComponents: analysis.network_components || {},
                 riskLevel: String(analysis.risk_level || 'low'),
                 recommendedAction: String(analysis.recommended_action || 'Continue baseline monitoring.'),
-                modelVersion: String(analysis.model_version || 'hybrid-rule-zscore-v1.1'),
+                modelVersion: String(analysis.model_version || 'hybrid-vision-signal-v2'),
+                processSource: String(analysis.process_source || 'telemetry'),
+                networkSource: String(analysis.network_source || 'telemetry'),
+                securityFlag: Boolean(analysis.security_flag),
+                visionAnomalyScore: Number(analysis.vision_anomaly_score || 0),
+                visionDefectFlag: Boolean(analysis.vision_defect_flag),
+                visionInferenceMs: Number(analysis.vision_inference_ms || 0),
+                scanTimeMs: Number(analysis.scan_time_ms || 0),
                 reasons: Array.isArray(analysis.reasons) ? analysis.reasons : []
             };
 
@@ -484,6 +498,7 @@ class BottleFactoryPLC {
         const sensors = this.factory.getSensorStates();
         const system = this.factory.getSystemState();
         const io = this.plc.getIOState();
+        const plcStatus = this.plc.getStatus();
 
         const basePayload = {
             timestamp: new Date().toISOString(),
@@ -497,6 +512,7 @@ class BottleFactoryPLC {
             in_flight_bottles: system.bottles.length,
             output_alarm_horn: io.outputs[5],
             output_reject_gate: io.outputs[4],
+            scan_time_ms: Number(plcStatus.cycleTime || 0),
             network_packet_rate: 120 + Math.random() * 30,
             network_burst_ratio: Math.random(),
             network_unauthorized_attempts: Math.random() < 0.03 ? 1 : 0
@@ -578,6 +594,10 @@ class BottleFactoryPLC {
         const modelVersion = document.getElementById('model-version');
         const riskLevel = document.getElementById('risk-level');
         const recommendedAction = document.getElementById('recommended-action');
+        const processSource = document.getElementById('process-source');
+        const networkSource = document.getElementById('network-source');
+        const visionInferenceMs = document.getElementById('vision-inference-ms');
+        const securityFlag = document.getElementById('security-flag');
 
         if (modelVersion) {
             modelVersion.textContent = this.latestAnalysis.modelVersion;
@@ -591,6 +611,22 @@ class BottleFactoryPLC {
 
         if (recommendedAction) {
             recommendedAction.textContent = this.latestAnalysis.recommendedAction;
+        }
+
+        if (processSource) {
+            processSource.textContent = this.latestAnalysis.processSource;
+        }
+
+        if (networkSource) {
+            networkSource.textContent = this.latestAnalysis.networkSource;
+        }
+
+        if (visionInferenceMs) {
+            visionInferenceMs.textContent = `${Math.round(this.latestAnalysis.visionInferenceMs || 0)} ms`;
+        }
+
+        if (securityFlag) {
+            securityFlag.textContent = this.latestAnalysis.securityFlag ? 'TRIGGERED' : 'CLEAR';
         }
 
         this.renderComponents('process-components', this.latestAnalysis.processComponents);

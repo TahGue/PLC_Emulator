@@ -4,7 +4,7 @@ Use this flow to present your project as a machine learning engineering portfoli
 
 ## 1) 30-second intro
 
-"This is a PLC bottle-factory emulator with a hybrid ML anomaly detection backend. It combines rule-based monitoring, online z-score drift detection, and a network security anomaly lane."
+"This is a PLC bottle-factory emulator with a hybrid ML anomaly backend. It combines rule-based monitoring, a model-driven vision signal lane, and a network security anomaly lane."
 
 ## 2) Start and baseline (60 sec)
 
@@ -35,7 +35,7 @@ For each scenario, explain:
 
 Call out:
 - FastAPI + PostgreSQL event persistence
-- `/analyze`, `/health`, `/events` APIs
+- `/analyze`, `/health`, `/events`, `/signals/vision`, `/signals/security` APIs
 - Session KPIs: analyses run, anomaly hit-rate, inference latency
 - Exporting a JSON demo report with one click
 

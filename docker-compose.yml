@@ -29,8 +29,20 @@ services:
       DATABASE_URL: postgresql://plc:plc@postgres:5432/plc_emulator
       API_HOST: 0.0.0.0
       API_PORT: 8001
+      MODEL_ARTIFACT_PATH: /app/models/mvtec_feature_model.pkl
+      USE_FALLBACK_DRIFT_MODEL: "true"
+      PROCESS_ANOMALY_THRESHOLD: "60"
+      NETWORK_ALERT_THRESHOLD: "55"
+      EXPECTED_PACKET_RATE: "130"
+      VISION_SIGNAL_STALE_SECONDS: "8"
+      SECURITY_SIGNAL_STALE_SECONDS: "8"
+      ENABLE_CSV_LOGGING: "true"
+      CSV_LOG_PATH: /app/logs/analysis_events.csv
     ports:
       - "8001:8001"
+    volumes:
+      - ./backend/models:/app/models
+      - ./backend/logs:/app/logs
 
 volumes:
   pgdata:

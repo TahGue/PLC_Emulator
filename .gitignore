@@ -12,6 +12,13 @@ __pycache__/
 
 # Logs
 *.log
+backend/logs/*
+!backend/logs/.gitkeep
+
+# ML artifacts
+backend/models/*.pkl
+backend/models/*.pt
+backend/models/*.pth
 
 # IDE
 .vscode/
