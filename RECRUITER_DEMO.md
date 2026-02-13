@@ -1,10 +1,10 @@
-# Recruiter Demo Script (3-5 min)
+# Recruiter Demo Script (5-7 min)
 
-Use this flow to present your project as a machine learning engineering portfolio piece.
+Use this flow to present your project as a machine learning + industrial automation engineering portfolio piece.
 
 ## 1) 30-second intro
 
-"This is a PLC bottle-factory emulator with a hybrid ML anomaly backend. It combines rule-based monitoring, a model-driven vision signal lane, and a network security anomaly lane."
+"This is a PLC bottle-factory emulator with a hybrid ML anomaly backend. It combines rule-based monitoring, a PyTorch vision anomaly model, and a network security anomaly lane — all wired into real PLC I/O through Modbus TCP."
 
 ## 2) Start and baseline (60 sec)
 
@@ -31,20 +31,37 @@ For each scenario, explain:
 - Recommended action
 - Explainability bars (which features contributed most)
 
-## 4) Show engineering maturity (45 sec)
+## 4) Show engineering maturity (90 sec)
 
 Call out:
-- FastAPI + PostgreSQL event persistence
-- `/analyze`, `/health`, `/events`, `/signals/vision`, `/signals/security` APIs
+- **Two model architectures**: lightweight One-Class SVM (CPU) and PyTorch convolutional autoencoder (GPU-accelerated) — both trainable from the same CLI
+- **FastAPI + PostgreSQL** event persistence with JSONB fields
+- **Six API endpoints**: `/analyze`, `/health`, `/events`, `/events/stream`, `/signals/vision`, `/signals/security`
+- **SSE live dashboard**: open `backend/dashboard/live_events_dashboard.html` to show real-time event streaming
+- **Network attack injector**: demonstrate malformed Modbus packet injection and show the security lane flagging it
+- **OpenPLC Modbus bridge**: analyzer signals written to real PLC coils via Modbus TCP
+- **E2E scenario validator**: automated test harness covering baseline, defect, attack, and combined scenarios with JSON reports
 - Session KPIs: analyses run, anomaly hit-rate, inference latency
 - Exporting a JSON demo report with one click
 
-## 5) Close strong (30 sec)
+## 5) Show OT integration depth (45 sec)
 
-"This project demonstrates the full ML lifecycle in a practical industrial setting: telemetry ingestion, online scoring, explainability, alerting, and operational decision support. My next step is replacing synthetic telemetry with real packet capture and adding model evaluation tests."
+If OpenPLC runtime is available:
+- Show the Modbus bridge writing process/security flags to coils
+- Show the runtime validator confirming lockout behavior
+- Reference the tag mapping and runbook in `backend/openplc/`
+
+Otherwise, describe the architecture:
+- "The analyzer bridges to OpenPLC via Modbus TCP. Process anomaly and network alert flags are written to coils mapped to `I:0/8` and `I:0/9`. When both fire, the PLC ladder logic triggers security lockout on `O:0/8`."
+
+## 6) Close strong (30 sec)
+
+"This project demonstrates the full ML + OT lifecycle: model training with MVTec AD, online inference, explainability, network security monitoring, attack simulation, PLC integration via Modbus, and automated end-to-end validation. Everything runs locally with open-source tools."
 
 ## Suggested recruiter talking points
 
-- You can bridge software engineering + ML + operations.
+- You can bridge software engineering + ML + industrial operations.
 - You understand explainability and actionability, not just model output.
 - You can build end-to-end systems, not only notebooks.
+- You integrate ML into real OT protocols (Modbus TCP) and PLC runtimes.
+- You write automated validation harnesses, not just manual demos.

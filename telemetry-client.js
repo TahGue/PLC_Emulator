@@ -35,6 +35,42 @@ class TelemetryClient {
         return response;
     }
 
+    connectEventStream(onEvent, onError, sinceId = 0) {
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+        }
+
+        const url = `${this.baseUrl}/events/stream?since_id=${sinceId}`;
+        this.eventSource = new EventSource(url);
+
+        this.eventSource.onmessage = (message) => {
+            try {
+                const event = JSON.parse(message.data);
+                if (onEvent) {
+                    onEvent(event);
+                }
+            } catch (error) {
+                console.warn('SSE parse error:', error.message);
+            }
+        };
+
+        this.eventSource.onerror = () => {
+            if (onError) {
+                onError();
+            }
+        };
+
+        return this.eventSource;
+    }
+
+    disconnectEventStream() {
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+        }
+    }
+
     async request(path, options) {
         const controller = new AbortController();
         const timeoutHandle = setTimeout(() => controller.abort(), this.timeoutMs);

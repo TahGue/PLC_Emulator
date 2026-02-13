@@ -24,6 +24,8 @@ class BottleFactoryPLC {
         };
         this.scenarios = this.buildScenarioProfiles();
         this.activeScenarioKey = 'normal';
+        this.eventStreamConnected = false;
+        this.lastStreamEventId = 0;
         
         this.initializeEventListeners();
         this.initializePLCIntegration();
@@ -73,6 +75,7 @@ class BottleFactoryPLC {
 
         this.startBackendHealthChecks();
         this.startTelemetryLoop();
+        this.connectEventStream();
     }
     
     initializeUI() {
@@ -216,6 +219,68 @@ class BottleFactoryPLC {
             console.log('Bottle Factory PLC Stopped');
         }
     }
+
+    connectEventStream() {
+        this.telemetry.connectEventStream(
+            (event) => this.handleStreamEvent(event),
+            () => this.handleStreamError()
+        );
+        this.eventStreamConnected = true;
+        this.updateStreamStatus(true);
+    }
+
+    disconnectEventStream() {
+        this.telemetry.disconnectEventStream();
+        this.eventStreamConnected = false;
+        this.updateStreamStatus(false);
+    }
+
+    handleStreamEvent(event) {
+        if (!event || typeof event.id === 'undefined') {
+            return;
+        }
+
+        const eventId = Number(event.id);
+        if (eventId > this.lastStreamEventId) {
+            this.lastStreamEventId = eventId;
+        }
+
+        this.updateStreamStatus(true);
+
+        const hasProcessAnomaly = Boolean(event.process_anomaly);
+        const hasNetworkAlert = Boolean(event.network_alert);
+
+        if (hasProcessAnomaly || hasNetworkAlert) {
+            const reasons = Array.isArray(event.reasons) ? event.reasons : [];
+            this.pushDetectionEvent({
+                processAnomaly: hasProcessAnomaly,
+                networkAlert: hasNetworkAlert,
+                processScore: Number(event.process_score || 0),
+                networkScore: Number(event.network_score || 0),
+                riskLevel: String(event.risk_level || 'low'),
+                reasons: reasons
+            });
+        }
+    }
+
+    handleStreamError() {
+        this.updateStreamStatus(false);
+    }
+
+    updateStreamStatus(connected) {
+        const element = document.getElementById('stream-status');
+        if (!element) {
+            return;
+        }
+
+        if (connected) {
+            element.textContent = 'LIVE';
+            element.className = 'status-value backend-online';
+        } else {
+            element.textContent = 'OFF';
+            element.className = 'status-value backend-offline';
+        }
+    }
     
     reset() {
         // Stop system first
@@ -238,6 +303,9 @@ class BottleFactoryPLC {
             anomalyRuns: 0,
             latencySamples: []
         };
+        this.lastStreamEventId = 0;
+        this.disconnectEventStream();
+        this.connectEventStream();
         this.setScenario('normal');
         
         // Update displays
