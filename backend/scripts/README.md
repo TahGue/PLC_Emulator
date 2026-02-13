@@ -133,3 +133,23 @@ python backend/scripts/e2e_scenario_validator.py \
   --address-base 0 \
   --report-json backend/logs/e2e_scenario_report.json
 ```
+
+## 9) Optional live dashboard (SSE stream)
+
+Serve the static dashboard page:
+
+```bash
+python -m http.server 8090 --directory backend/dashboard
+```
+
+Open:
+
+```text
+http://localhost:8090/live_events_dashboard.html
+```
+
+The dashboard consumes:
+
+```text
+GET /events/stream
+```

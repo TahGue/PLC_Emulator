@@ -108,6 +108,7 @@ bottle-factory-plc/
     ├── scripts/openplc_runtime_validator.py
     ├── scripts/e2e_scenario_validator.py
     ├── scripts/README.md
+    ├── dashboard/live_events_dashboard.html
     ├── openplc/tag_mapping.example.json
     └── openplc/OPENPLC_FACTORYIO_RUNBOOK.md
 ```
@@ -173,6 +174,10 @@ python backend/scripts/openplc_runtime_validator.py --openplc-host 127.0.0.1 --o
 
 # Validate full E2E scenarios (baseline/defect/network/combined)
 python backend/scripts/e2e_scenario_validator.py --api-base-url http://localhost:8001 --report-json backend/logs/e2e_scenario_report.json
+
+# Optional: open simple live dashboard fed by /events/stream
+python -m http.server 8090 --directory backend/dashboard
+# then open http://localhost:8090/live_events_dashboard.html
 ```
 
 > The bridge polls `GET /signals` and writes process/security flags to OpenPLC coils, so you can map them to PLC logic equivalent to `I:0/8` and `I:0/9`.
@@ -233,6 +238,7 @@ backend/openplc/OPENPLC_FACTORYIO_RUNBOOK.md
 - `GET /signals` - inspect latest cached vision/security lanes
 - `POST /analyze` - analyze one telemetry sample
 - `GET /events?limit=20` - recent persisted analysis events
+- `GET /events/stream` - Server-Sent Events feed for live dashboards (Node-RED/Grafana/custom UI)
 
 `POST /analyze` response includes recruiter-friendly ML metadata:
 - `process_components`

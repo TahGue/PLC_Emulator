@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
@@ -9,8 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .ml import load_artifact_metadata
@@ -627,6 +629,85 @@ def _serialize_jsonb(value: Any) -> Any:
     return json.loads(value)
 
 
+EVENT_SELECT_COLUMNS = """
+    id,
+    created_at,
+    process_score,
+    network_score,
+    process_anomaly,
+    network_alert,
+    model_confidence,
+    process_components,
+    network_components,
+    risk_level,
+    recommended_action,
+    model_version,
+    reasons,
+    vision_anomaly_score,
+    vision_defect_flag,
+    vision_inference_ms,
+    security_flag,
+    scan_time_ms,
+    process_source,
+    network_source
+"""
+
+
+def _parse_event_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "created_at": row[1].isoformat(),
+        "process_score": row[2],
+        "network_score": row[3],
+        "process_anomaly": row[4],
+        "network_alert": row[5],
+        "model_confidence": row[6],
+        "process_components": _serialize_jsonb(row[7]) or {},
+        "network_components": _serialize_jsonb(row[8]) or {},
+        "risk_level": row[9],
+        "recommended_action": row[10],
+        "model_version": row[11],
+        "reasons": _serialize_jsonb(row[12]) or [],
+        "vision_anomaly_score": row[13],
+        "vision_defect_flag": row[14],
+        "vision_inference_ms": row[15],
+        "security_flag": row[16],
+        "scan_time_ms": row[17],
+        "process_source": row[18],
+        "network_source": row[19],
+    }
+
+
+def _fetch_events(limit: int, *, ascending: bool = False, after_id: int | None = None) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(limit, 200))
+    order_direction = "ASC" if ascending else "DESC"
+
+    where_clause = ""
+    params: list[Any]
+    if after_id is not None:
+        where_clause = "WHERE id > %s"
+        params = [max(after_id, 0), safe_limit]
+    else:
+        params = [safe_limit]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    {EVENT_SELECT_COLUMNS}
+                FROM analysis_events
+                {where_clause}
+                ORDER BY id {order_direction}
+                LIMIT %s
+                """,
+                tuple(params),
+            )
+            rows = cur.fetchall()
+
+    return [_parse_event_row(row) for row in rows]
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     try:
@@ -770,68 +851,61 @@ def analyze(payload: TelemetryPayload) -> dict[str, Any]:
     }
 
 
+@app.get("/events/stream")
+async def events_stream(
+    request: Request,
+    since_id: int = 0,
+    limit: int = 100,
+    poll_interval_seconds: float = 1.0,
+) -> StreamingResponse:
+    cursor_id = max(since_id, 0)
+    safe_limit = max(1, min(limit, 200))
+    poll_interval = max(0.2, min(poll_interval_seconds, 10.0))
+
+    async def event_generator():
+        nonlocal cursor_id
+        yield "retry: 1500\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                events_payload = _fetch_events(
+                    safe_limit,
+                    ascending=True,
+                    after_id=cursor_id,
+                )
+            except Exception as error:
+                error_payload = json.dumps({"error": str(error)})
+                yield f"event: error\\ndata: {error_payload}\\n\\n"
+                await asyncio.sleep(poll_interval)
+                continue
+
+            if events_payload:
+                for event in events_payload:
+                    event_id = int(event.get("id", cursor_id))
+                    cursor_id = max(cursor_id, event_id)
+                    yield f"data: {json.dumps(event)}\\n\\n"
+            else:
+                yield ": keepalive\\n\\n"
+
+            await asyncio.sleep(poll_interval)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/events")
 def events(limit: int = 20) -> dict[str, Any]:
-    safe_limit = max(1, min(limit, 200))
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    id,
-                    created_at,
-                    process_score,
-                    network_score,
-                    process_anomaly,
-                    network_alert,
-                    model_confidence,
-                    process_components,
-                    network_components,
-                    risk_level,
-                    recommended_action,
-                    model_version,
-                    reasons,
-                    vision_anomaly_score,
-                    vision_defect_flag,
-                    vision_inference_ms,
-                    security_flag,
-                    scan_time_ms,
-                    process_source,
-                    network_source
-                FROM analysis_events
-                ORDER BY id DESC
-                LIMIT %s
-                """,
-                (safe_limit,),
-            )
-            rows = cur.fetchall()
-
-    parsed_rows = [
-        {
-            "id": row[0],
-            "created_at": row[1].isoformat(),
-            "process_score": row[2],
-            "network_score": row[3],
-            "process_anomaly": row[4],
-            "network_alert": row[5],
-            "model_confidence": row[6],
-            "process_components": _serialize_jsonb(row[7]) or {},
-            "network_components": _serialize_jsonb(row[8]) or {},
-            "risk_level": row[9],
-            "recommended_action": row[10],
-            "model_version": row[11],
-            "reasons": _serialize_jsonb(row[12]) or [],
-            "vision_anomaly_score": row[13],
-            "vision_defect_flag": row[14],
-            "vision_inference_ms": row[15],
-            "security_flag": row[16],
-            "scan_time_ms": row[17],
-            "process_source": row[18],
-            "network_source": row[19],
-        }
-        for row in rows
-    ]
+    parsed_rows = _fetch_events(limit, ascending=False)
 
     return {"count": len(parsed_rows), "events": parsed_rows}
 
