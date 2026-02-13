@@ -182,6 +182,33 @@ def test_signals_endpoint_returns_null_when_no_signals(client) -> None:
     assert body["security"] is None
 
 
+def test_events_endpoint_returns_list(client) -> None:
+    fake_events = [
+        {
+            "id": 1,
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "process_score": 42.0,
+            "network_score": 10.0,
+            "process_anomaly": True,
+            "network_alert": False,
+            "model_confidence": 88.0,
+            "risk_level": "medium",
+            "reasons": ["drift detected"],
+        },
+    ]
+    with patch("app.main._fetch_events", return_value=fake_events):
+        response = client.get("/events?limit=5")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "count" in body
+    assert "events" in body
+    assert isinstance(body["events"], list)
+    assert body["count"] == 1
+    assert body["events"][0]["id"] == 1
+    assert body["events"][0]["process_anomaly"] is True
+
+
 def test_metrics_shows_vision_gauge_after_signal(client) -> None:
     client.post("/signals/vision", json={
         "timestamp": datetime.now(timezone.utc).isoformat(),
