@@ -270,33 +270,52 @@ class LadderLogicRenderer {
     }
     
     render(ladderProgram, plcState) {
+        // Auto-size canvas to fit all rungs
+        const neededHeight = 30 + ladderProgram.rungs.length * (this.rungHeight + this.rungSpacing) + 20;
+        if (this.canvas.height < neededHeight) {
+            this.canvas.height = Math.max(600, neededHeight);
+            this.ctx.font = '10px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+        }
+
         this.clear();
         this.drawGrid();
         
         // Render each rung
         ladderProgram.rungs.forEach((rung, index) => {
-            // Determine if rung is energized based on PLC state
             const rungEnergized = this.isRungEnergized(rung, plcState);
             this.drawRung(index, rung.instructions, rungEnergized);
+            // Draw comment if present
+            if (rung.comment) {
+                const y = 30 + index * (this.rungHeight + this.rungSpacing);
+                this.ctx.fillStyle = '#6b7280';
+                this.ctx.font = '8px sans-serif';
+                this.ctx.textAlign = 'left';
+                this.ctx.fillText(rung.comment, 40, y + 8);
+                this.ctx.textAlign = 'center';
+                this.ctx.font = '10px monospace';
+            }
         });
     }
     
     isRungEnergized(rung, plcState) {
-        // Simple logic to determine if rung is energized
-        // Check if first instruction condition is met
-        if (rung.instructions.length > 0) {
-            const firstInstruction = rung.instructions[0];
-            if (firstInstruction.type === 'XIC') {
-                const address = firstInstruction.operands[0];
-                const index = this.parseAddress(address);
-                return plcState.inputs[index];
-            } else if (firstInstruction.type === 'XIO') {
-                const address = firstInstruction.operands[0];
-                const index = this.parseAddress(address);
-                return !plcState.inputs[index];
-            }
+        // Use the stored energized state from last execution if available
+        if (rung.energized !== undefined) return rung.energized;
+
+        // Fallback: evaluate conditions from I/O state
+        let result = true;
+        for (const inst of rung.instructions) {
+            if (!inst.type.startsWith('X')) continue;
+            const address = inst.operands[0];
+            const index = this.parseAddress(address);
+            if (index < 0) continue;
+            const isOutput = address.startsWith('O:');
+            const val = isOutput ? plcState.outputs[index] : plcState.inputs[index];
+            if (inst.type === 'XIC') result = result && val;
+            else if (inst.type === 'XIO') result = result && !val;
         }
-        return false;
+        return result;
     }
     
     parseAddress(address) {

@@ -3,83 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bottle Factory PLC Emulator</title>
+    <title>PLC Factory Emulator</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🏭 Bottle Factory PLC Emulator</h1>
-            <div class="status-bar">
-                <div class="status-item">
-                    <span class="status-label">PLC Status:</span>
-                    <span id="plc-status" class="status-value">RUNNING</span>
+    <div class="app-container">
+        <!-- ── Header ─────────────────────────────────────────── -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1>⚡ PLC Factory Emulator</h1>
+            </div>
+            <div class="header-center">
+                <div class="status-bar">
+                    <div class="status-item">
+                        <span class="status-label">PLC</span>
+                        <span id="plc-status" class="status-value plc-stopped">STOPPED</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Mode</span>
+                        <span id="mode-status" class="status-value">EDIT</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Components</span>
+                        <span id="comp-count" class="status-value">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Wires</span>
+                        <span id="wire-count" class="status-value">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Backend</span>
+                        <span id="backend-status" class="status-value backend-offline">OFFLINE</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Stream</span>
+                        <span id="stream-status" class="status-value backend-offline">OFF</span>
+                    </div>
                 </div>
-                <div class="status-item">
-                    <span class="status-label">Backend:</span>
-                    <span id="backend-status" class="status-value">OFFLINE</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">Stream:</span>
-                    <span id="stream-status" class="status-value backend-offline">OFF</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">Cycle Time:</span>
-                    <span id="cycle-time" class="status-value">100ms</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">Production Count:</span>
-                    <span id="production-count" class="status-value">0</span>
+            </div>
+            <div class="header-right">
+                <div class="mode-toggle">
+                    <button id="mode-edit-btn" class="mode-btn active" title="Edit Mode">✏️ Edit</button>
+                    <button id="mode-sim-btn" class="mode-btn" title="Simulate Mode">▶️ Simulate</button>
                 </div>
             </div>
         </header>
 
-        <main class="main-grid">
-            <!-- Factory Visualization -->
-            <section class="factory-section">
-                <h2>Factory Floor</h2>
-                <div class="factory-floor">
-                    <div class="conveyor-belt">
-                        <div class="belt-segment" id="conveyor-1"></div>
-                        <div class="belt-segment" id="conveyor-2"></div>
-                        <div class="belt-segment" id="conveyor-3"></div>
-                        <div class="belt-segment" id="conveyor-4"></div>
-                        <div class="belt-segment" id="conveyor-5"></div>
-                    </div>
-                    
-                    <div class="station filler-station">
-                        <div class="station-header">Filler</div>
-                        <div class="station-indicator" id="filler-status"></div>
-                        <div class="bottle-slot" id="filler-bottle"></div>
-                    </div>
-                    
-                    <div class="station capper-station">
-                        <div class="station-header">Capper</div>
-                        <div class="station-indicator" id="capper-status"></div>
-                        <div class="bottle-slot" id="capper-bottle"></div>
-                    </div>
-                    
-                    <div class="station quality-station">
-                        <div class="station-header">Quality Check</div>
-                        <div class="station-indicator" id="quality-status"></div>
-                        <div class="bottle-slot" id="quality-bottle"></div>
-                    </div>
-                    
-                    <div class="output-area">
-                        <div class="output-label">Output</div>
-                        <div id="completed-bottles"></div>
-                    </div>
-                </div>
-                
-                <div class="control-panel">
-                    <button id="start-btn" class="control-btn start-btn">START</button>
-                    <button id="stop-btn" class="control-btn stop-btn">STOP</button>
-                    <button id="reset-btn" class="control-btn reset-btn">RESET</button>
-                    <button id="emergency-btn" class="control-btn emergency-btn">EMERGENCY STOP</button>
-                </div>
-            </section>
+        <!-- ── Editor Toolbar ─────────────────────────────────── -->
+        <div class="editor-toolbar">
+            <div class="toolbar-group">
+                <button id="zoom-in-btn" class="tool-btn" title="Zoom In">🔍+</button>
+                <button id="zoom-out-btn" class="tool-btn" title="Zoom Out">🔍−</button>
+                <button id="zoom-fit-btn" class="tool-btn" title="Fit View">⊞</button>
+                <button id="toggle-grid-btn" class="tool-btn active" title="Toggle Grid">⊞ Grid</button>
+                <button id="toggle-snap-btn" class="tool-btn active" title="Toggle Snap">🧲 Snap</button>
+            </div>
+            <div class="toolbar-group">
+                <label class="tool-label">Presets:</label>
+                <select id="preset-select" class="tool-select">
+                    <option value="">— Empty Canvas —</option>
+                    <option value="bottle_factory">Bottle Factory Line</option>
+                    <option value="sorting_station">Sorting Station</option>
+                    <option value="mixing_process">Mixing Process</option>
+                </select>
+                <button id="load-preset-btn" class="tool-btn">Load</button>
+            </div>
+            <div class="toolbar-group">
+                <button id="save-layout-btn" class="tool-btn" title="Save Layout">💾 Save</button>
+                <button id="load-layout-btn" class="tool-btn" title="Load Layout">📂 Load</button>
+                <button id="clear-layout-btn" class="tool-btn tool-btn-danger" title="Clear All">🗑️ Clear</button>
+            </div>
+            <div class="toolbar-group toolbar-sim-controls" id="sim-controls" style="display:none;">
+                <button id="start-btn" class="control-btn start-btn">▶ START</button>
+                <button id="stop-btn" class="control-btn stop-btn">⏹ STOP</button>
+                <button id="reset-btn" class="control-btn reset-btn">↺ RESET</button>
+                <button id="emergency-btn" class="control-btn emergency-btn">⚠ E-STOP</button>
+            </div>
+        </div>
 
-            <!-- PLC Ladder Logic -->
+        <!-- ── Main Workspace ─────────────────────────────────── -->
+        <div class="editor-workspace">
+            <!-- Component Palette (Left Sidebar) -->
+            <div class="component-palette" id="component-palette">
+                <div class="palette-header">Components</div>
+                <div class="palette-search">
+                    <input type="text" id="palette-search" placeholder="Search components..." />
+                </div>
+                <div id="palette-categories" class="palette-categories">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- SVG Canvas (Center) -->
+            <div class="editor-canvas-wrapper">
+                <svg id="editor-canvas" class="editor-canvas"></svg>
+                <div class="canvas-hint" id="canvas-hint">
+                    Drag components from the palette → Drop on canvas → Connect ports by clicking
+                </div>
+            </div>
+
+            <!-- Property Panel (Right Sidebar) -->
+            <div class="property-panel" id="property-panel">
+                <div class="panel-header">Properties</div>
+                <div id="prop-content" class="prop-content">
+                    <div class="prop-placeholder">Select a component to edit its properties</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Detail Sections (Below Editor) ─────────────────── -->
+        <div class="detail-grid">
+            <!-- Ladder Logic -->
             <section class="ladder-section">
                 <h2>Ladder Logic</h2>
                 <div class="ladder-container">
@@ -96,239 +130,210 @@
                 <h2>I/O Status</h2>
                 <div class="io-grid">
                     <div class="io-group">
-                        <h3>Inputs (I)</h3>
-                        <div class="io-list">
-                            <div class="io-item">
-                                <span class="io-address">I:0/0</span>
-                                <span class="io-description">Emergency Stop</span>
-                                <span class="io-status" id="I0_0">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/1</span>
-                                <span class="io-description">Start Button</span>
-                                <span class="io-status" id="I0_1">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/2</span>
-                                <span class="io-description">Stop Button</span>
-                                <span class="io-status" id="I0_2">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/3</span>
-                                <span class="io-description">Bottle at Filler</span>
-                                <span class="io-status" id="I0_3">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/4</span>
-                                <span class="io-description">Bottle at Capper</span>
-                                <span class="io-status" id="I0_4">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/5</span>
-                                <span class="io-description">Bottle at Quality</span>
-                                <span class="io-status" id="I0_5">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/6</span>
-                                <span class="io-description">Level Sensor</span>
-                                <span class="io-status" id="I0_6">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/7</span>
-                                <span class="io-description">Cap Available</span>
-                                <span class="io-status" id="I0_7">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/8</span>
-                                <span class="io-description">AI Process Anomaly</span>
-                                <span class="io-status" id="I0_8">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">I:0/9</span>
-                                <span class="io-description">Network Security Alert</span>
-                                <span class="io-status" id="I0_9">OFF</span>
-                            </div>
+                        <h3>Inputs (I:0/0 – I:0/15)</h3>
+                        <div class="io-list" id="io-inputs-list">
+                            <!-- Populated by JS from engine address map -->
                         </div>
                     </div>
-                    
                     <div class="io-group">
-                        <h3>Outputs (O)</h3>
-                        <div class="io-list">
-                            <div class="io-item">
-                                <span class="io-address">O:0/0</span>
-                                <span class="io-description">Conveyor Motor</span>
-                                <span class="io-status" id="O0_0">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/1</span>
-                                <span class="io-description">Fill Valve</span>
-                                <span class="io-status" id="O0_1">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/2</span>
-                                <span class="io-description">Capper Motor</span>
-                                <span class="io-status" id="O0_2">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/3</span>
-                                <span class="io-description">Quality Light</span>
-                                <span class="io-status" id="O0_3">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/4</span>
-                                <span class="io-description">Reject Gate</span>
-                                <span class="io-status" id="O0_4">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/5</span>
-                                <span class="io-description">Alarm Horn</span>
-                                <span class="io-status" id="O0_5">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/6</span>
-                                <span class="io-description">Running Light</span>
-                                <span class="io-status" id="O0_6">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/7</span>
-                                <span class="io-description">System Ready</span>
-                                <span class="io-status" id="O0_7">OFF</span>
-                            </div>
-                            <div class="io-item">
-                                <span class="io-address">O:0/8</span>
-                                <span class="io-description">Security Lockout</span>
-                                <span class="io-status" id="O0_8">OFF</span>
-                            </div>
+                        <h3>Outputs (O:0/0 – O:0/15)</h3>
+                        <div class="io-list" id="io-outputs-list">
+                            <!-- Populated by JS -->
                         </div>
                     </div>
                 </div>
             </section>
+        </div>
 
-            <!-- Monitoring -->
-            <section class="monitoring-section">
-                <h2>System Monitoring</h2>
-                <div class="monitoring-grid">
-                    <div class="metric-card">
-                        <h3>Production Rate</h3>
-                        <div class="metric-value" id="production-rate">0</div>
-                        <div class="metric-unit">bottles/min</div>
+        <!-- Real-Time Monitoring -->
+        <section class="monitoring-section">
+            <h2>Real-Time Monitoring &amp; Analysis</h2>
+            <div class="monitoring-grid">
+                <div class="metric-card">
+                    <h3>Components</h3>
+                    <div class="metric-value" id="metric-components">0</div>
+                    <div class="metric-unit">placed</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Active Sensors</h3>
+                    <div class="metric-value" id="metric-sensors">0</div>
+                    <div class="metric-unit">triggered</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Active Actuators</h3>
+                    <div class="metric-value" id="metric-actuators">0</div>
+                    <div class="metric-unit">running</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Cycle Time</h3>
+                    <div class="metric-value" id="cycle-time">100ms</div>
+                    <div class="metric-unit">PLC scan</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Process Score</h3>
+                    <div class="metric-value" id="anomaly-score">0</div>
+                    <div class="metric-unit">0-100</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Network Score</h3>
+                    <div class="metric-value" id="network-risk">0</div>
+                    <div class="metric-unit">0-100</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Confidence</h3>
+                    <div class="metric-value" id="model-confidence">100</div>
+                    <div class="metric-unit">%</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Packet Rate</h3>
+                    <div class="metric-value" id="packet-rate-live">130</div>
+                    <div class="metric-unit">pkt/s</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Attack Simulation Panel -->
+        <section class="attack-section">
+            <div class="attack-header">
+                <h2>🛡️ Attack Simulation Lab</h2>
+                <div class="attack-header-controls">
+                    <span class="attack-status" id="attack-status">No attacks active</span>
+                    <button id="attack-reset-btn" class="control-btn" title="Deactivate all attacks">🛑 Reset All</button>
+                </div>
+            </div>
+
+            <div class="attack-layout">
+                <!-- Attack List -->
+                <div class="attack-list-panel">
+                    <h3>Available Attacks</h3>
+                    <div class="attack-category-filter">
+                        <button class="attack-filter-btn active" data-filter="all">All</button>
+                        <button class="attack-filter-btn" data-filter="network">Network</button>
+                        <button class="attack-filter-btn" data-filter="protocol">Protocol</button>
+                        <button class="attack-filter-btn" data-filter="process">Process</button>
+                        <button class="attack-filter-btn" data-filter="physical">Physical</button>
                     </div>
-                    <div class="metric-card">
-                        <h3>Efficiency</h3>
-                        <div class="metric-value" id="efficiency">100</div>
-                        <div class="metric-unit">%</div>
-                    </div>
-                    <div class="metric-card">
-                        <h3>Reject Rate</h3>
-                        <div class="metric-value" id="reject-rate">0</div>
-                        <div class="metric-unit">%</div>
-                    </div>
-                    <div class="metric-card">
-                        <h3>Uptime</h3>
-                        <div class="metric-value" id="uptime">00:00:00</div>
-                        <div class="metric-unit">HH:MM:SS</div>
-                    </div>
-                    <div class="metric-card">
-                        <h3>Anomaly Score</h3>
-                        <div class="metric-value" id="anomaly-score">0</div>
-                        <div class="metric-unit">0-100</div>
-                    </div>
-                    <div class="metric-card">
-                        <h3>Network Risk</h3>
-                        <div class="metric-value" id="network-risk">0</div>
-                        <div class="metric-unit">0-100</div>
-                    </div>
-                    <div class="metric-card">
-                        <h3>Model Confidence</h3>
-                        <div class="metric-value" id="model-confidence">100</div>
-                        <div class="metric-unit">%</div>
+                    <div class="attack-list" id="attack-list">
+                        <!-- Populated by JS -->
                     </div>
                 </div>
 
-                <div class="ml-lab-grid">
-                    <div class="ml-card">
-                        <h3>Scenario Lab</h3>
-                        <p class="ml-caption">Use controlled telemetry scenarios to demonstrate model behavior live.</p>
-                        <div class="scenario-row" id="scenario-buttons">
-                            <button class="scenario-btn active" data-scenario="normal">Normal Baseline</button>
-                            <button class="scenario-btn" data-scenario="process_drift">Process Drift</button>
-                            <button class="scenario-btn" data-scenario="network_attack">Network Attack</button>
-                            <button class="scenario-btn" data-scenario="combined">Combined Incident</button>
+                <!-- Real-Time Packet Monitor -->
+                <div class="packet-monitor-panel">
+                    <h3>Real-Time Packet Analysis</h3>
+                    <div class="packet-stats-row">
+                        <div class="packet-stat">
+                            <span class="packet-stat-label">Rate</span>
+                            <span class="packet-stat-value" id="pkt-rate">130</span>
+                            <span class="packet-stat-unit">pkt/s</span>
                         </div>
-                        <div class="scenario-active">Active: <span id="active-scenario">Normal Baseline</span></div>
-                    </div>
-
-                    <div class="ml-card">
-                        <h3>Model Explainability</h3>
-                        <div class="explainability-row">
-                            <span>Model Version</span>
-                            <strong id="model-version">hybrid-vision-signal-v2</strong>
+                        <div class="packet-stat">
+                            <span class="packet-stat-label">Burst</span>
+                            <span class="packet-stat-value" id="pkt-burst">0.15</span>
+                            <span class="packet-stat-unit">ratio</span>
                         </div>
-                        <div class="explainability-row">
-                            <span>Risk Level</span>
-                            <strong id="risk-level" class="risk-pill risk-low">LOW</strong>
+                        <div class="packet-stat">
+                            <span class="packet-stat-label">Unauth</span>
+                            <span class="packet-stat-value" id="pkt-unauth">0</span>
+                            <span class="packet-stat-unit">attempts</span>
                         </div>
-                        <div class="explainability-row">
-                            <span>Recommended Action</span>
-                            <strong id="recommended-action">Continue baseline monitoring.</strong>
-                        </div>
-                        <div class="explainability-row">
-                            <span>Process Source</span>
-                            <strong id="process-source">telemetry</strong>
-                        </div>
-                        <div class="explainability-row">
-                            <span>Network Source</span>
-                            <strong id="network-source">telemetry</strong>
-                        </div>
-                        <div class="explainability-row">
-                            <span>Vision Inference</span>
-                            <strong id="vision-inference-ms">0 ms</strong>
-                        </div>
-                        <div class="explainability-row">
-                            <span>Security Flag</span>
-                            <strong id="security-flag">CLEAR</strong>
-                        </div>
-
-                        <div class="component-block">
-                            <h4>Process Score Components</h4>
-                            <div id="process-components" class="component-list"></div>
-                        </div>
-                        <div class="component-block">
-                            <h4>Network Score Components</h4>
-                            <div id="network-components" class="component-list"></div>
+                        <div class="packet-stat">
+                            <span class="packet-stat-label">Malicious</span>
+                            <span class="packet-stat-value" id="pkt-malicious">0%</span>
+                            <span class="packet-stat-unit">ratio</span>
                         </div>
                     </div>
-
-                    <div class="ml-card">
-                        <h3>Session ML KPIs</h3>
-                        <div class="kpi-row"><span>Analyses Run</span><strong id="analysis-count">0</strong></div>
-                        <div class="kpi-row"><span>Anomaly Hit Rate</span><strong id="anomaly-hit-rate">0%</strong></div>
-                        <div class="kpi-row"><span>Avg Inference Latency</span><strong id="avg-inference-latency">0 ms</strong></div>
-                        <button id="export-report-btn" class="control-btn export-btn">Export Demo Report</button>
+                    <div class="packet-bars">
+                        <div class="packet-bar-row">
+                            <span class="bar-label">Normal</span>
+                            <div class="bar-track"><div class="bar-fill bar-normal" id="bar-normal" style="width:100%"></div></div>
+                        </div>
+                        <div class="packet-bar-row">
+                            <span class="bar-label">Burst</span>
+                            <div class="bar-track"><div class="bar-fill bar-burst" id="bar-burst" style="width:0%"></div></div>
+                        </div>
+                        <div class="packet-bar-row">
+                            <span class="bar-label">Malicious</span>
+                            <div class="bar-track"><div class="bar-fill bar-malicious" id="bar-malicious" style="width:0%"></div></div>
+                        </div>
+                    </div>
+                    <div class="packet-log" id="packet-log">
+                        <div class="packet-log-header">
+                            <span>Time</span><span>Source</span><span>Dest</span><span>Proto</span><span>Len</span><span>Type</span>
+                        </div>
+                        <!-- Populated by JS -->
                     </div>
                 </div>
 
-                <div class="insights-section">
-                    <h3>Anomaly + Security Feed</h3>
-                    <div id="detection-feed" class="detection-feed">
-                        <div class="no-alarms">No anomaly or security events</div>
+                <!-- Analysis & Impact -->
+                <div class="analysis-impact-panel">
+                    <h3>Analysis &amp; Impact</h3>
+                    <div class="risk-indicator">
+                        <div class="risk-gauge" id="risk-gauge">
+                            <div class="risk-gauge-fill" id="risk-gauge-fill"></div>
+                            <span class="risk-gauge-label" id="risk-gauge-label">LOW</span>
+                        </div>
+                    </div>
+                    <div class="analysis-detail">
+                        <div class="explainability-row"><span>Risk Level</span><strong id="risk-level" class="risk-pill risk-low">LOW</strong></div>
+                        <div class="explainability-row"><span>Security Flag</span><strong id="security-flag">CLEAR</strong></div>
+                        <div class="explainability-row"><span>Action</span><strong id="recommended-action" class="action-text">Continue baseline monitoring.</strong></div>
+                    </div>
+                    <div class="component-block"><h4>Process Score Components</h4><div id="process-components" class="component-list"></div></div>
+                    <div class="component-block"><h4>Network Score Components</h4><div id="network-components" class="component-list"></div></div>
+
+                    <h4>Component Impact Feed</h4>
+                    <div class="impact-feed" id="impact-feed">
+                        <div class="no-alarms">No component impacts</div>
                     </div>
                 </div>
-                
-                <div class="alarms-section">
-                    <h3>Active Alarms</h3>
-                    <div id="alarms-list" class="alarms-list">
-                        <div class="no-alarms">No active alarms</div>
-                    </div>
+            </div>
+        </section>
+
+        <!-- Event Feed & Alarms -->
+        <section class="monitoring-section">
+            <div class="ml-lab-grid">
+                <div class="ml-card">
+                    <h3>Session KPIs</h3>
+                    <div class="kpi-row"><span>Analyses Run</span><strong id="analysis-count">0</strong></div>
+                    <div class="kpi-row"><span>Anomaly Hit Rate</span><strong id="anomaly-hit-rate">0%</strong></div>
+                    <div class="kpi-row"><span>Avg Inference Latency</span><strong id="avg-inference-latency">0 ms</strong></div>
+                    <div class="kpi-row"><span>Active Attacks</span><strong id="active-attack-count">0</strong></div>
+                    <button id="export-report-btn" class="control-btn export-btn">Export Demo Report</button>
                 </div>
-            </section>
-        </main>
+                <div class="ml-card">
+                    <h3>Model Explainability</h3>
+                    <div class="explainability-row"><span>Model Version</span><strong id="model-version">real-time-analyzer-v1</strong></div>
+                    <div class="explainability-row"><span>Process Source</span><strong id="process-source">local-analysis</strong></div>
+                    <div class="explainability-row"><span>Network Source</span><strong id="network-source">packet-monitor</strong></div>
+                    <div class="explainability-row"><span>Vision Inference</span><strong id="vision-inference-ms">0 ms</strong></div>
+                </div>
+            </div>
+            <div class="insights-section">
+                <h3>Anomaly + Security Feed</h3>
+                <div id="detection-feed" class="detection-feed">
+                    <div class="no-alarms">No anomaly or security events</div>
+                </div>
+            </div>
+            <div class="alarms-section">
+                <h3>Active Alarms</h3>
+                <div id="alarms-list" class="alarms-list">
+                    <div class="no-alarms">No active alarms</div>
+                </div>
+            </div>
+        </section>
     </div>
 
+    <!-- Hidden file input for layout import -->
+    <input type="file" id="layout-file-input" accept=".json" style="display:none"/>
+
     <script src="plc-core.js"></script>
-    <script src="factory-simulation.js"></script>
+    <script src="component-registry.js"></script>
+    <script src="simulation-engine.js"></script>
+    <script src="layout-editor.js"></script>
     <script src="ladder-logic.js"></script>
     <script src="telemetry-client.js"></script>
+    <script src="attack-simulator.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

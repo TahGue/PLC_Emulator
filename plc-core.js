@@ -100,6 +100,11 @@ class PLCCore {
         this.notifyAllOutputsChanged();
     }
     
+    // Attach a LadderProgram to drive execution
+    setLadderProgram(program) {
+        this.ladderProgram = program;
+    }
+
     // Main scan cycle
     runScanning() {
         if (!this.runMode) return;
@@ -140,51 +145,16 @@ class PLCCore {
     }
     
     executeLadderLogic() {
-        // Main ladder logic for bottle factory
-
+        // Built-in security lockout (always runs)
         const processAnomaly = this.inputs[8];
         const networkAlert = this.inputs[9];
         const securityLockout = processAnomaly || networkAlert;
         this.setOutput('O:0/8', securityLockout);
-        
-        // Rung 1: System control
-        // Emergency stop must be OFF, Start must be ON, and no errors
-        const systemReady = !this.inputs[0] && this.inputs[1] && !this.errorState && !securityLockout;
-        this.setOutput('O:0/6', systemReady); // System ready light
-        
-        // Rung 2: Main conveyor control
-        // Run conveyor when system is ready and no stop button
-        const conveyorRun = systemReady && !this.inputs[2];
-        this.setOutput('O:0/0', conveyorRun); // Conveyor motor
-        
-        // Rung 3: Filler control
-        // Fill when bottle is at filler and level sensor is ready
-        const fillerRun = conveyorRun && this.inputs[3] && this.inputs[6];
-        this.setOutput('O:0/1', fillerRun); // Fill valve
-        
-        // Rung 4: Capper control
-        // Cap when bottle is at capper and caps are available
-        const capperRun = conveyorRun && this.inputs[4] && this.inputs[7];
-        this.setOutput('O:0/2', capperRun); // Capper motor
-        
-        // Rung 5: Quality check
-        // Check when bottle is at quality station
-        const qualityCheck = conveyorRun && this.inputs[5];
-        this.setOutput('O:0/3', qualityCheck); // Quality light
-        
-        // Rung 6: Reject gate control
-        // Activate reject if quality check fails (simulated)
-        const rejectGate = qualityCheck && (Math.random() < 0.1 || processAnomaly);
-        this.setOutput('O:0/4', rejectGate); // Reject gate
-        
-        // Rung 7: Alarm control
-        // Alarm on emergency stop or error state
-        const alarmActive = this.emergencyStopActive || this.errorState || securityLockout;
-        this.setOutput('O:0/5', alarmActive); // Alarm horn
-        
-        // Rung 8: Running light
-        // Running light when system is operating
-        this.setOutput('O:0/7', conveyorRun); // Running light
+
+        // Execute the attached ladder program
+        if (this.ladderProgram) {
+            this.ladderProgram.execute(this);
+        }
     }
     
     updateOutputs() {
@@ -292,13 +262,18 @@ class LadderInstruction {
         this.operands = operands;
     }
     
+    readBit(plc, address) {
+        if (address.startsWith('O:')) return plc.getOutput(address);
+        return plc.getInput(address);
+    }
+
     execute(plc) {
         switch (this.type) {
             case 'XIC': // Examine If Closed
-                return plc.getInput(this.operands[0]);
+                return this.readBit(plc, this.operands[0]);
                 
             case 'XIO': // Examine If Open
-                return !plc.getInput(this.operands[0]);
+                return !this.readBit(plc, this.operands[0]);
                 
             case 'OTE': // Output Energize
                 plc.setOutput(this.operands[0], true);
@@ -341,13 +316,16 @@ class LadderRung {
                 const condition = instruction.execute(plc);
                 result = result && condition;
             } else if (instruction.type.startsWith('O') || instruction.type.startsWith('T') || instruction.type.startsWith('C')) {
-                // Output instruction - execute if condition is true
+                // Output instruction - energize or de-energize based on conditions
                 if (result) {
                     instruction.execute(plc);
+                } else if (instruction.type === 'OTE') {
+                    plc.setOutput(instruction.operands[0], false);
                 }
             }
         }
         
+        this.energized = result;
         return result;
     }
     

@@ -8,7 +8,7 @@ WORKDIR /app
 
 # Install CPU-only torch first (much smaller than full CUDA wheel)
 RUN pip install --no-cache-dir \
-    torch==2.5.1+cpu torchvision==0.20.1+cpu \
+    torch==2.5.1 torchvision==0.20.1 \
     --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements-docker.txt ./
