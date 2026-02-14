@@ -4,8 +4,10 @@ A complete, local, PC-based PLC factory emulator with:
 - Customizable visual layout editor with drag-and-drop components (JavaScript)
 - Real-time simulation engine with signal propagation
 - **Real-time attack simulation lab** with 10 ICS/SCADA attack types and live packet analysis
+- **LSTM Autoencoder anomaly detection** — deep learning pipeline trained on PLC telemetry (PyTorch)
 - AI-style anomaly scoring + network security anomaly lane (Python/FastAPI)
 - Persistent telemetry storage in PostgreSQL (Docker)
+- Jupyter notebook with full ML pipeline walkthrough, ROC curves, and evaluation
 
 All libraries used are free and open source.
 
@@ -15,7 +17,7 @@ All libraries used are free and open source.
 - **Drag-and-drop**: Place sensors, actuators, logic gates, process equipment, and indicators on an SVG canvas
 - **Component registry**: 20+ component types across 5 categories (sensors, actuators, logic, process, indicators)
 - **Wiring**: Click-to-connect ports with automatic signal routing
-- **Preset templates**: Bottle Factory, Sorting Station, Mixing Process
+- **Preset templates**: 5 fully-wired presets (Bottle Factory, Sorting Station, Mixing Process, Conveyor Merge, CIP Sequence)
 - **Zoom/pan/grid**: Full canvas navigation with snap-to-grid support
 - **Import/Export**: Save and load layouts as JSON
 
@@ -67,6 +69,28 @@ Each attack features:
 - **Score Breakdowns**: Per-factor contribution bars for process and network scores
 - **Detection Feed**: Chronological anomaly and security events
 - **Alarm System**: Active alarm management with severity levels
+
+### 🧠 LSTM Anomaly Detection (Deep Learning)
+Real-time anomaly detection using an LSTM Autoencoder trained on PLC telemetry:
+
+- **14-feature time-series input**: conveyor state, production rate, reject rate, sensor states, PLC I/O counts, network packet rate, burst ratio, scan time
+- **LSTM Encoder-Decoder architecture**: 2-layer LSTM encoder → 16-dim latent space → 2-layer LSTM decoder
+- **Sliding window** (30 timesteps) with min-max normalization
+- **96.1% average detection rate** across 8 ICS attack types with 6.6% FPR
+- **Real-time inference** at ~3-15ms per window via FastAPI backend
+- **Attack classification**: heuristic classifier estimates attack type from per-feature reconstruction errors
+- **Live dashboard panel**: anomaly score gauge, score history chart, feature error breakdown, attack probability bars
+
+| Attack Type | Detection Rate | AUC |
+|-------------|---------------|-----|
+| DoS / Packet Flood | 100% | ~1.0 |
+| Man-in-the-Middle | 100% | ~1.0 |
+| False Data Injection | 100% | ~1.0 |
+| Modbus Injection | 100% | ~1.0 |
+| Replay Attack | 100% | ~1.0 |
+| Combined Attack | 100% | ~1.0 |
+| Sensor Jamming | 96.2% | ~0.99 |
+| Stuxnet-Style (subtle) | 72.4% | ~0.93 |
 
 ### 🤖 AI + Security Lane (Backend)
 - **Process anomaly lane** wired to `I:0/8`
@@ -163,13 +187,19 @@ PLC_Emulator/
 ├── DEMO_GUIDE.md
 ├── CONTRIBUTING.md
 ├── README.md
+├── notebooks/
+│   └── lstm_anomaly_detection.ipynb  # Full ML pipeline notebook (train + eval + viz)
 └── backend/
     ├── Dockerfile
     ├── requirements.txt
-    ├── app/main.py              # FastAPI anomaly + security analyzer
+    ├── app/main.py              # FastAPI anomaly + security analyzer + /anomaly/* endpoints
     ├── app/ml/model.py          # MVTec feature-model helpers
-    ├── app/ml/torch_autoencoder.py  # PyTorch conv-autoencoder
+    ├── app/ml/torch_autoencoder.py  # PyTorch conv-autoencoder (vision)
+    ├── app/ml/lstm_autoencoder.py   # LSTM Autoencoder for time-series anomaly detection
+    ├── models/
+    │   └── lstm_anomaly_detector.pt  # Pre-trained LSTM model artifact
     ├── scripts/
+    │   ├── train_lstm_anomaly.py     # Train LSTM anomaly detector
     │   ├── train_mvtec_model.py
     │   ├── evaluate_mvtec_model.py
     │   ├── vision_camera_simulator.py
@@ -315,6 +345,13 @@ python backend/scripts/e2e_scenario_validator.py --api-base-url http://localhost
 - `GET /events/stream` - Server-Sent Events feed for live dashboards
 - `GET /metrics` - Prometheus text exposition format
 
+### Anomaly Detection API
+
+- `POST /anomaly/score` - ingest telemetry sample + return LSTM anomaly score, feature errors, attack classification
+- `POST /anomaly/ingest` - buffer telemetry sample only (no scoring)
+- `GET /anomaly/status` - model loaded status, buffer fill, last score, feature names
+- `GET /anomaly/history` - rolling anomaly score history (last 300 ticks)
+
 ## Component Types
 
 ### Sensors
@@ -334,9 +371,15 @@ python backend/scripts/e2e_scenario_validator.py --api-base-url http://localhost
 
 ## Preset Templates
 
-- **Bottle Factory**: Conveyor, proximity sensors, solenoid valves, indicator lights
-- **Sorting Station**: Photoelectric sensors, pneumatic cylinders, conveyor with logic gates
-- **Mixing Process**: Tanks, pumps, level sensors, temperature sensor, mixer, gauges
+All presets are fully wired (wire count ≥ component count) with auto-generated ladder logic.
+
+| Preset | Components | Wires | Description |
+|--------|-----------|-------|-------------|
+| **Bottle Factory** | 25 | 25 | Conveyor line with fill, cap, quality stations, logic gates, tank monitoring |
+| **Sorting Station** | 20 | 21 | Dual-path sorting with A/B diverters, logic gates, counters, bin conveyors |
+| **Mixing Process** | 22 | 22 | Feed/mix tanks, pump, heater, mixer, drain loop, alarm logic, gauges |
+| **Conveyor Merge** | 22 | 25 | Two infeed conveyors merging into one outfeed with priority logic |
+| **CIP Sequence** | 20 | 22 | Clean-in-place system with water/chemical valves, phases, drain, tank |
 
 ## Browser Compatibility
 
@@ -346,13 +389,61 @@ Recommended browsers:
 - Safari 13+
 - Edge 80+
 
+## ML / Deep Learning Pipeline
+
+### Training the LSTM Anomaly Detector
+
+```bash
+cd backend
+python3 scripts/train_lstm_anomaly.py \
+  --output models/lstm_anomaly_detector.pt \
+  --epochs 50 --samples 8000 --seq-len 30 \
+  --hidden-dim 64 --latent-dim 16
+```
+
+The script generates synthetic normal-operation telemetry, trains the LSTM autoencoder, evaluates on 8 attack types, and saves the model artifact.
+
+### Jupyter Notebook
+
+A complete ML pipeline walkthrough is available in `notebooks/lstm_anomaly_detection.ipynb`:
+
+1. **Data Generation** — synthetic normal + 8 attack type telemetry
+2. **Feature Exploration** — distribution plots for Normal vs DoS vs MITM
+3. **Model Training** — LSTM Autoencoder with loss curve visualization
+4. **ROC Curves** — per-attack ROC with AUC scores
+5. **Feature Importance** — heatmap of per-feature reconstruction error by attack type
+6. **Confusion Matrix** — binary classification (Normal vs Anomaly)
+7. **Architecture Summary** — parameter counts and hyperparameters
+
+```bash
+cd notebooks
+jupyter notebook lstm_anomaly_detection.ipynb
+```
+
+### Model Architecture
+
+```
+LSTMAutoencoder(
+  (encoder): LSTMEncoder(
+    (lstm): LSTM(14, 64, num_layers=2, batch_first=True, dropout=0.1)
+    (fc): Linear(64, 16)
+  )
+  (decoder): LSTMDecoder(
+    (fc): Linear(16, 64)
+    (lstm): LSTM(64, 64, num_layers=2, batch_first=True, dropout=0.1)
+    (output_fc): Linear(64, 14)
+  )
+)
+```
+
 ## Open-Source Stack
 
 - **Frontend**: vanilla HTML/CSS/JavaScript + SVG + SSE EventSource
 - **API**: FastAPI + Uvicorn
 - **Database**: PostgreSQL (psycopg3)
-- **ML**: scikit-learn (One-Class SVM) + PyTorch (conv-autoencoder) + OpenCV
+- **ML**: PyTorch (LSTM Autoencoder + Conv Autoencoder) + scikit-learn (One-Class SVM) + OpenCV
 - **OT Protocols**: Modbus TCP (pymodbus), Scapy packet capture
+- **Notebooks**: Jupyter for ML pipeline walkthrough
 - **Monitoring** (optional): Grafana + Prometheus (`docker-compose.grafana.yml`)
 - **Runtime**: Docker Compose
 
@@ -362,8 +453,9 @@ Recommended browsers:
 1. **Components not rendering**: Ensure browser supports SVG + ES6; check console (F12) for errors
 2. **Attacks have no effect**: Simulation must be running (Simulate mode + Start)
 3. **Backend shows OFFLINE**: Run `docker compose up --build` and verify `http://localhost:8001/health` (backend is optional for attack simulation)
-4. **Performance Issues**: Close other browser tabs; reduce number of active attacks
-5. **Layout not saving**: Use Export Layout button to save as JSON file
+4. **Anomaly panel shows "not loaded"**: Backend must be running with the LSTM model at the `LSTM_MODEL_PATH` location
+5. **Performance Issues**: Close other browser tabs; reduce number of active attacks
+6. **Layout not saving**: Use Export Layout button to save as JSON file
 
 ### Debug Information
 Open the browser console (F12) to see:

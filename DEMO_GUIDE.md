@@ -1,6 +1,6 @@
 # Demo Guide
 
-Step-by-step walkthrough for the PLC Factory Emulator — layout editor, attack simulation, ladder logic, and real-time monitoring.
+Step-by-step walkthrough for the PLC Factory Emulator — layout editor, attack simulation, LSTM anomaly detection, ladder logic, and real-time monitoring.
 
 ---
 
@@ -76,14 +76,45 @@ Click **Reset All Attacks** to deactivate everything. Scores return to baseline.
 
 Use the filter buttons (All / Network / Protocol / Process / Physical) above the attack list to show only specific attack categories.
 
-### 9) Switch presets
+### 9) Watch the LSTM Anomaly Detection panel
+
+Scroll to the **🧠 LSTM Anomaly Detection** panel (below the Attack Simulation Lab):
+
+1. **With no attacks active**, the panel shows:
+   - Anomaly score gauge near 0 (green)
+   - Status badge: **Normal**
+   - Verdict: "System operating within normal baseline"
+   - Score history chart stays flat and low
+
+2. **Toggle on a DoS attack**, then observe:
+   - Anomaly score spikes to 80-100 (red)
+   - Status badge pulses **ANOMALY**
+   - Verdict: "ANOMALY DETECTED — likely: dos flood"
+   - **Feature Error Breakdown** shows `network_packet_rate` and `scan_time_ms` as top contributors
+   - **Attack Classification** shows `dos flood` at ~50%+
+
+3. **Switch to Man-in-the-Middle** instead:
+   - Feature errors shift to `reject_rate`, sensor features
+   - Attack Classification correctly shifts to `mitm`
+
+4. **Combine multiple attacks**: observe how the feature error pattern changes and the classifier adapts
+
+> **Note**: The anomaly panel requires the backend to be running with the trained LSTM model.
+> Without the backend, the panel shows "Model: not loaded" but the rest of the emulator works normally.
+
+### 10) Switch presets
 
 1. Click **STOP** to pause the simulation
-2. Use the **Preset** dropdown to load **Sorting Station** or **Mixing Process**
+2. Use the **Preset** dropdown to load any of the 5 presets:
+   - **Bottle Factory** (25 components, 25 wires)
+   - **Sorting Station** (20 components, 21 wires)
+   - **Mixing Process** (22 components, 22 wires)
+   - **Conveyor Merge** (22 components, 25 wires)
+   - **CIP Sequence** (20 components, 22 wires)
 3. Notice the ladder logic **automatically re-syncs** with new rungs matching the new layout
 4. Click **START** again to simulate the new layout
 
-### 10) Export a report
+### 11) Export a report
 
 Click **Export Demo Report** to download a JSON snapshot of the current session (KPIs, latest analysis, recent events).
 
@@ -91,7 +122,7 @@ Click **Export Demo Report** to download a JSON snapshot of the current session 
 
 ## Full Stack (with backend)
 
-### 11) Start backend services
+### 12) Start backend services
 
 ```bash
 docker compose up --build -d
@@ -104,7 +135,27 @@ With the backend running, the frontend shows:
 - Stream status: **LIVE**
 - Analysis events persisted to PostgreSQL
 
-### 12) Optional: vision + security sidecars
+### 13) Train or retrain the LSTM anomaly detector
+
+```bash
+cd backend
+python3 scripts/train_lstm_anomaly.py \
+  --output models/lstm_anomaly_detector.pt \
+  --epochs 50 --samples 8000
+```
+
+This generates synthetic data, trains the model, evaluates on 8 attack types, and saves the artifact. Restart the backend to load the new model.
+
+### 14) Explore the ML notebook
+
+```bash
+cd notebooks
+jupyter notebook lstm_anomaly_detection.ipynb
+```
+
+The notebook walks through the full pipeline: data generation, training, ROC curves, feature importance heatmap, confusion matrix, and model architecture.
+
+### 15) Optional: vision + security sidecars
 
 ```bash
 # Train a model
@@ -117,7 +168,7 @@ python backend/scripts/vision_camera_simulator.py --dataset-root <MVTecRoot> --c
 python backend/scripts/network_security_monitor.py --mode simulate --loop
 ```
 
-### 13) Optional: backend attack injection
+### 16) Optional: backend attack injection
 
 ```bash
 python backend/scripts/network_attack_injector.py \
@@ -127,7 +178,7 @@ python backend/scripts/network_attack_injector.py \
   --check-analyzer --require-security-flag
 ```
 
-### 14) Optional: OpenPLC integration
+### 17) Optional: OpenPLC integration
 
 ```bash
 # Bridge analyzer flags to PLC coils
@@ -141,7 +192,7 @@ python backend/scripts/openplc_runtime_validator.py \
   --report-json backend/logs/openplc_validation_report.json
 ```
 
-### 15) Optional: monitoring dashboard
+### 18) Optional: monitoring dashboard
 
 ```bash
 # Grafana + Prometheus
@@ -163,6 +214,9 @@ python -m http.server 8090 --directory backend/dashboard
 | **Packet Monitor** | Packet rate, burst ratio, and malicious ratio bars |
 | **Risk Gauge** | Horizontal gauge filling from LOW → CRITICAL |
 | **Component Impact Feed** | Real-time log of attack effects on components |
+| **LSTM Anomaly Score** | Gauge + history chart showing reconstruction error over time |
+| **Feature Error Breakdown** | Per-feature bars showing which telemetry dimensions deviate most |
+| **Attack Classification** | Probability bars estimating attack type from error patterns |
 | **Detection Feed** | Chronological anomaly and security events |
 | **Alarms** | Active alarms triggered by threshold crossings |
 | **Session KPIs** | Analyses run, anomaly hit rate, average inference latency |

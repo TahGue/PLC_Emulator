@@ -38,6 +38,7 @@ services:
       SECURITY_SIGNAL_STALE_SECONDS: "8"
       ENABLE_CSV_LOGGING: "true"
       CSV_LOG_PATH: /app/logs/analysis_events.csv
+      LSTM_MODEL_PATH: /app/models/lstm_anomaly_detector.pt
     ports:
       - "8001:8001"
     volumes:

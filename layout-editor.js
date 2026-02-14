@@ -459,6 +459,28 @@ class LayoutEditor {
                 g.appendChild(sel);
             }
 
+            // Simulation mode: show forced indicator on sensors
+            if (this.mode === 'simulate' && def.category === 'sensors') {
+                const forced = comp.state && comp.state.forced;
+                const border = this.createSVGElement('rect', {
+                    x: '-3', y: '-3',
+                    width: def.w + 6, height: def.h + 6,
+                    rx: '9', fill: 'none',
+                    stroke: forced ? '#22c55e' : '#475569',
+                    'stroke-width': forced ? '2.5' : '1',
+                    'stroke-dasharray': forced ? '' : '4 3',
+                    opacity: forced ? '1' : '0.5'
+                });
+                if (forced) {
+                    const anim = this.createSVGElement('animate', {
+                        attributeName: 'opacity', values: '1;0.4;1',
+                        dur: '1.5s', repeatCount: 'indefinite'
+                    });
+                    border.appendChild(anim);
+                }
+                g.appendChild(border);
+            }
+
             // Component SVG content - use DOMParser for reliable rendering
             const content = this.createSVGElement('g');
             try {

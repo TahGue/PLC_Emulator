@@ -14,6 +14,18 @@ from .torch_autoencoder import (
     score_torch_image,
     train_torch_autoencoder,
 )
+from .lstm_autoencoder import (
+    AnomalyDetector,
+    LSTMAutoencoder,
+    generate_attack_data,
+    generate_normal_data,
+    load_lstm_artifact,
+    save_lstm_artifact,
+    telemetry_to_vector,
+    train_lstm_autoencoder,
+    FEATURE_NAMES,
+    N_FEATURES,
+)
 
 __all__ = [
     "extract_image_features",
@@ -28,4 +40,14 @@ __all__ = [
     "score_torch_image",
     "train_torch_autoencoder",
     "train_mvtec_feature_model",
+    "AnomalyDetector",
+    "LSTMAutoencoder",
+    "generate_attack_data",
+    "generate_normal_data",
+    "load_lstm_artifact",
+    "save_lstm_artifact",
+    "telemetry_to_vector",
+    "train_lstm_autoencoder",
+    "FEATURE_NAMES",
+    "N_FEATURES",
 ]

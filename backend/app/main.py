@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .ml import load_artifact_metadata
+from .ml.lstm_autoencoder import AnomalyDetector, telemetry_to_vector, FEATURE_NAMES
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://plc:plc@localhost:5432/plc_emulator")
@@ -37,6 +38,9 @@ ENABLE_CSV_LOGGING = os.getenv("ENABLE_CSV_LOGGING", "true").lower() == "true"
 CSV_LOG_PATH = os.getenv("CSV_LOG_PATH", "/app/logs/analysis_events.csv")
 
 MODEL_ARTIFACT_METADATA = load_artifact_metadata(MODEL_ARTIFACT_PATH)
+
+LSTM_MODEL_PATH = os.getenv("LSTM_MODEL_PATH", "/app/models/lstm_anomaly_detector.pt")
+ANOMALY_DETECTOR = AnomalyDetector()
 MODEL_VERSION = (
     str(MODEL_ARTIFACT_METADATA.get("model_version"))
     if MODEL_ARTIFACT_METADATA
@@ -191,6 +195,15 @@ class OnlineAnomalyModel:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     init_db()
+    # Try to load LSTM anomaly detector
+    if Path(LSTM_MODEL_PATH).exists():
+        ok = ANOMALY_DETECTOR.load(LSTM_MODEL_PATH)
+        if ok:
+            print(f"[ML] LSTM anomaly detector loaded from {LSTM_MODEL_PATH}")
+        else:
+            print(f"[ML] Failed to load LSTM model from {LSTM_MODEL_PATH}")
+    else:
+        print(f"[ML] No LSTM model at {LSTM_MODEL_PATH} — anomaly detection will use buffer-only mode")
     yield
 
 
@@ -982,6 +995,72 @@ def metrics() -> str:
         ])
 
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+# ── Anomaly Detection Endpoints ───────────────────────────────────────
+
+class AnomalyTelemetryPayload(BaseModel):
+    """Telemetry payload for LSTM anomaly detection."""
+    conveyor_running: bool = False
+    production_rate: float = 0
+    reject_rate: float = 0
+    in_flight_bottles: int = 0
+    bottle_at_filler: bool = False
+    bottle_at_capper: bool = False
+    bottle_at_quality: bool = False
+    output_alarm_horn: bool = False
+    output_reject_gate: bool = False
+    network_packet_rate: float = 0
+    network_burst_ratio: float = 0
+    scan_time_ms: float = 0
+    io_input_sum: int = 0
+    io_output_sum: int = 0
+
+
+@app.post("/anomaly/ingest")
+def anomaly_ingest(payload: AnomalyTelemetryPayload) -> dict[str, Any]:
+    """Ingest a telemetry sample into the LSTM anomaly detector buffer."""
+    ANOMALY_DETECTOR.ingest(payload.model_dump())
+    return {
+        "ok": True,
+        "buffer_size": len(ANOMALY_DETECTOR.buffer),
+        "ready": ANOMALY_DETECTOR.is_ready(),
+    }
+
+
+@app.post("/anomaly/score")
+def anomaly_score(payload: AnomalyTelemetryPayload) -> dict[str, Any]:
+    """Ingest a sample AND return the current anomaly score."""
+    ANOMALY_DETECTOR.ingest(payload.model_dump())
+    result = ANOMALY_DETECTOR.score()
+    return result
+
+
+@app.get("/anomaly/status")
+def anomaly_status() -> dict[str, Any]:
+    """Get the anomaly detector status and latest score."""
+    loaded = ANOMALY_DETECTOR.loaded is not None
+    return {
+        "model_loaded": loaded,
+        "model_version": ANOMALY_DETECTOR.loaded["metadata"]["model_version"] if loaded else None,
+        "buffer_size": len(ANOMALY_DETECTOR.buffer),
+        "seq_len": ANOMALY_DETECTOR.seq_len,
+        "ready": ANOMALY_DETECTOR.is_ready(),
+        "last_score": ANOMALY_DETECTOR.last_score,
+        "last_anomaly": ANOMALY_DETECTOR.last_anomaly,
+        "inference_ms": ANOMALY_DETECTOR.inference_ms,
+        "feature_names": FEATURE_NAMES,
+    }
+
+
+@app.get("/anomaly/history")
+def anomaly_history() -> dict[str, Any]:
+    """Get recent anomaly score history."""
+    return {
+        "scores": list(ANOMALY_DETECTOR.score_history),
+        "count": len(ANOMALY_DETECTOR.score_history),
+        "threshold": ANOMALY_DETECTOR.loaded["metadata"]["threshold"] if ANOMALY_DETECTOR.loaded else 0,
+    }
 
 
 def reset_runtime_state_for_tests() -> None:

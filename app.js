@@ -36,6 +36,13 @@ class PLCEmulatorApp {
             this.maxBackoffMs = 8000;
             this.impactBuffer = [];
 
+            // LSTM anomaly detection state
+            this.anomalyState = {
+                modelLoaded: false, modelVersion: 'not_loaded',
+                lastResult: null, scoreHistory: [],
+                backendUrl: 'http://localhost:8001',
+            };
+
             this.initPalette();
             this.initEditorCallbacks();
             this.initEventListeners();
@@ -47,6 +54,7 @@ class PLCEmulatorApp {
             this.startBackendHealthChecks();
             this.startTelemetryLoop();
             this.connectEventStream();
+            this.initAnomalyDetection();
 
             // Initial render - auto-load bottle factory preset to show demo
             this.loadPreset('bottle_factory');
@@ -481,7 +489,7 @@ class PLCEmulatorApp {
     initPLCCallbacks() {
         this.plc.onInputChange.push((addr, val) => this.updateSingleIO('I', addr, val));
         this.plc.onOutputChange.push((addr, val) => this.updateSingleIO('O', addr, val));
-        this.plc.onScanComplete.push(() => {});
+        this.plc.onScanComplete.push(() => { });
     }
 
     // ── Mode Management ──────────────────────────────────────────
@@ -509,6 +517,16 @@ class PLCEmulatorApp {
         this.isRunning = true;
         this.plc.start();
         this.engine.start();
+
+        // Auto-force START switches so presets work immediately
+        for (const comp of this.engine.getAllComponents()) {
+            const def = this.registry.get(comp.type);
+            if (!def || def.category !== 'sensors') continue;
+            const label = (comp.props.label || '').toLowerCase();
+            if (label.includes('start') || label === 'system start') {
+                comp.state.forced = true;
+            }
+        }
 
         this.engine.onTick = (dt) => {
             // Sync: sensors → PLC inputs, PLC outputs → actuators
@@ -546,6 +564,10 @@ class PLCEmulatorApp {
         this.engine.reset();
         this.alarms.clearAllAlarms();
         for (let i = 0; i < 16; i++) this.plc.setInput(`I:0/${i}`, false);
+        // Clear all forced sensor states
+        for (const comp of this.engine.getAllComponents()) {
+            if (comp.state) comp.state.forced = false;
+        }
         this.latestAnalysis = this.buildDefaultAnalysis();
         this.detectionFeed = [];
         this.analysisStats = { totalRuns: 0, anomalyRuns: 0, latencySamples: [] };
@@ -738,7 +760,7 @@ class PLCEmulatorApp {
                     <input class="prop-input" id="prop-${key}" value="${val}" /></div>`;
             } else if (typeof val === 'boolean') {
                 html += `<div class="prop-row"><span class="prop-label">${key}</span>
-                    <button class="prop-btn-toggle ${val?'on':'off'}" id="prop-${key}">${val?'ON':'OFF'}</button></div>`;
+                    <button class="prop-btn-toggle ${val ? 'on' : 'off'}" id="prop-${key}">${val ? 'ON' : 'OFF'}</button></div>`;
             }
         }
         html += `</div>`;
@@ -750,7 +772,7 @@ class PLCEmulatorApp {
             const outPort = def.ports.find(p => p.type === 'output');
             if (outPort && outPort.dataType === 'digital') {
                 html += `<div class="prop-row"><span class="prop-label">Force State</span>
-                    <button class="prop-btn-toggle ${forced?'on':'off'}" id="prop-force">${forced?'ON':'OFF'}</button></div>`;
+                    <button class="prop-btn-toggle ${forced ? 'on' : 'off'}" id="prop-force">${forced ? 'ON' : 'OFF'}</button></div>`;
             }
             if (outPort && outPort.dataType === 'analog') {
                 const val = comp.state.value !== undefined ? comp.state.value : 0;
@@ -766,8 +788,8 @@ class PLCEmulatorApp {
         for (const port of def.ports) {
             const connected = this.editor.isPortConnected(compId, port.id);
             html += `<div class="prop-row">
-                <span class="prop-label" style="color:${port.type==='input'?'#3b82f6':'#f59e0b'}">${port.type==='input'?'→':'←'} ${port.label}</span>
-                <span style="font-size:0.7rem;color:${connected?'#22c55e':'#475569'}">${connected?'Connected':'—'}</span>
+                <span class="prop-label" style="color:${port.type === 'input' ? '#3b82f6' : '#f59e0b'}">${port.type === 'input' ? '→' : '←'} ${port.label}</span>
+                <span style="font-size:0.7rem;color:${connected ? '#22c55e' : '#475569'}">${connected ? 'Connected' : '—'}</span>
             </div>`;
         }
         html += `</div>`;
@@ -830,7 +852,7 @@ class PLCEmulatorApp {
                     update[key] = newVal;
                     this.engine.updateComponentProps(compId, update);
                     el.textContent = newVal ? 'ON' : 'OFF';
-                    el.className = `prop-btn-toggle ${newVal?'on':'off'}`;
+                    el.className = `prop-btn-toggle ${newVal ? 'on' : 'off'}`;
                 });
             }
         }
@@ -842,7 +864,7 @@ class PLCEmulatorApp {
                 const newVal = !comp.state.forced;
                 this.engine.forceDigitalSensor(compId, newVal);
                 forceEl.textContent = newVal ? 'ON' : 'OFF';
-                forceEl.className = `prop-btn-toggle ${newVal?'on':'off'}`;
+                forceEl.className = `prop-btn-toggle ${newVal ? 'on' : 'off'}`;
                 this.editor.render();
             });
         }
@@ -886,6 +908,255 @@ class PLCEmulatorApp {
         this.updateDetectionFeed();
         this.updateExplainabilityPanel();
         this.updateSessionKpis();
+    }
+
+    // ── LSTM Anomaly Detection ─────────────────────────────────────
+    initAnomalyDetection() {
+        // Check backend anomaly status
+        this.checkAnomalyModel();
+        // Start anomaly scoring loop (every 500ms when simulation running)
+        this.anomalyInterval = setInterval(() => {
+            if (this.isRunning) this.sendAnomalyTelemetry();
+        }, 500);
+    }
+
+    async checkAnomalyModel() {
+        try {
+            const resp = await fetch(`${this.anomalyState.backendUrl}/anomaly/status`, { signal: AbortSignal.timeout(2000) });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            this.anomalyState.modelLoaded = data.model_loaded;
+            this.anomalyState.modelVersion = data.model_version || 'not_loaded';
+            const badge = document.getElementById('anomaly-model-badge');
+            if (badge) badge.textContent = data.model_loaded ? `Model: ${data.model_version}` : 'Model: not loaded';
+        } catch { /* backend not running */ }
+    }
+
+    collectAnomalyTelemetry() {
+        const io = this.plc.getIOState();
+        const metrics = this.engine.getProductionMetrics();
+        const analysis = this.latestAnalysis || {};
+        return {
+            conveyor_running: io.outputs[0] || false,
+            production_rate: metrics.productionRate || 0,
+            reject_rate: metrics.rejectRate || 0,
+            in_flight_bottles: metrics.inFlightBottles || 0,
+            bottle_at_filler: io.inputs[3] || false,
+            bottle_at_capper: io.inputs[4] || false,
+            bottle_at_quality: io.inputs[5] || false,
+            output_alarm_horn: io.outputs[5] || false,
+            output_reject_gate: io.outputs[4] || false,
+            network_packet_rate: analysis.packetRate || 130,
+            network_burst_ratio: analysis.burstRatio || 0,
+            scan_time_ms: this.plc.cycleTime || 100,
+            io_input_sum: io.inputs.filter(Boolean).length,
+            io_output_sum: io.outputs.filter(Boolean).length,
+        };
+    }
+
+    async sendAnomalyTelemetry() {
+        const payload = this.collectAnomalyTelemetry();
+        try {
+            const resp = await fetch(`${this.anomalyState.backendUrl}/anomaly/score`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: AbortSignal.timeout(2000),
+            });
+            if (!resp.ok) return;
+            const result = await resp.json();
+            this.anomalyState.lastResult = result;
+            if (result.score_history) this.anomalyState.scoreHistory = result.score_history;
+            this.renderAnomalyPanel(result);
+        } catch { /* backend unavailable — render offline state */ }
+    }
+
+    renderAnomalyPanel(result) {
+        const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+        // Score value + color
+        const scoreEl = document.getElementById('anomaly-score-value');
+        if (scoreEl) {
+            scoreEl.textContent = result.anomaly_score.toFixed(1);
+            scoreEl.className = 'anomaly-score-value ' +
+                (result.anomaly_score >= 60 ? 'high' : result.anomaly_score >= 30 ? 'medium' : 'low');
+        }
+
+        // Stats
+        setEl('anomaly-threshold', result.threshold ? result.threshold.toFixed(4) : '—');
+        setEl('anomaly-inference-ms', `${result.inference_ms.toFixed(1)} ms`);
+        setEl('anomaly-buffer-fill', `${Math.round(result.buffer_fill * 100)}%`);
+
+        // Status badge
+        const statusBadge = document.getElementById('anomaly-status-badge');
+        if (statusBadge) {
+            if (result.is_anomaly) {
+                statusBadge.textContent = 'ANOMALY';
+                statusBadge.className = 'anomaly-status-badge anomaly';
+            } else if (result.anomaly_score > 25) {
+                statusBadge.textContent = 'Warning';
+                statusBadge.className = 'anomaly-status-badge warning';
+            } else {
+                statusBadge.textContent = 'Normal';
+                statusBadge.className = 'anomaly-status-badge normal';
+            }
+        }
+
+        // Verdict
+        const verdict = document.getElementById('anomaly-verdict');
+        if (verdict) {
+            if (result.buffer_fill < 1) {
+                verdict.textContent = `Buffering... ${Math.round(result.buffer_fill * 100)}%`;
+                verdict.className = 'anomaly-verdict';
+            } else if (result.is_anomaly) {
+                const topAttack = Object.keys(result.attack_probabilities || {})[0] || 'unknown';
+                verdict.textContent = `ANOMALY DETECTED — likely: ${topAttack.replace(/_/g, ' ')}`;
+                verdict.className = 'anomaly-verdict anomaly';
+            } else {
+                verdict.textContent = 'System operating within normal baseline';
+                verdict.className = 'anomaly-verdict normal';
+            }
+        }
+
+        // Gauge canvas
+        this.renderAnomalyGauge(result.anomaly_score);
+
+        // History chart
+        this.renderAnomalyHistory(result.score_history || this.anomalyState.scoreHistory);
+
+        // Feature error bars
+        this.renderFeatureErrors(result.feature_errors || {});
+
+        // Attack probabilities
+        this.renderAttackProbs(result.attack_probabilities || {});
+    }
+
+    renderAnomalyGauge(score) {
+        const canvas = document.getElementById('anomaly-gauge-canvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width, h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h - 10, r = 80;
+        const startAngle = Math.PI, endAngle = 2 * Math.PI;
+        const scoreAngle = startAngle + (score / 100) * Math.PI;
+
+        // Background arc
+        ctx.beginPath(); ctx.arc(cx, cy, r, startAngle, endAngle);
+        ctx.lineWidth = 14; ctx.strokeStyle = '#1e293b'; ctx.lineCap = 'round'; ctx.stroke();
+
+        // Score arc with gradient
+        if (score > 0.5) {
+            const grad = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
+            grad.addColorStop(0, '#22c55e');
+            grad.addColorStop(0.4, '#eab308');
+            grad.addColorStop(0.7, '#f97316');
+            grad.addColorStop(1, '#ef4444');
+            ctx.beginPath(); ctx.arc(cx, cy, r, startAngle, scoreAngle);
+            ctx.lineWidth = 14; ctx.strokeStyle = grad; ctx.lineCap = 'round'; ctx.stroke();
+        }
+
+        // Threshold marker
+        if (this.anomalyState.lastResult) {
+            const threshPct = Math.min(100, (this.anomalyState.lastResult.threshold / (this.anomalyState.lastResult.threshold * 2.5)) * 100);
+            const threshAngle = startAngle + (threshPct / 100) * Math.PI;
+            const tx = cx + (r + 12) * Math.cos(threshAngle);
+            const ty = cy + (r + 12) * Math.sin(threshAngle);
+            ctx.beginPath(); ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#f87171'; ctx.fill();
+        }
+    }
+
+    renderAnomalyHistory(scores) {
+        const canvas = document.getElementById('anomaly-history-canvas');
+        if (!canvas || !scores.length) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width = canvas.clientWidth;
+        const h = canvas.height = 180;
+        ctx.clearRect(0, 0, w, h);
+
+        const maxScore = Math.max(100, ...scores);
+        const step = w / Math.max(scores.length - 1, 1);
+
+        // Grid lines
+        ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 1;
+        for (let y = 0; y <= 100; y += 25) {
+            const py = h - 20 - (y / maxScore) * (h - 30);
+            ctx.beginPath(); ctx.moveTo(30, py); ctx.lineTo(w, py); ctx.stroke();
+            ctx.fillStyle = '#475569'; ctx.font = '9px monospace';
+            ctx.fillText(y.toString(), 4, py + 3);
+        }
+
+        // Threshold line
+        if (this.anomalyState.lastResult) {
+            const threshPct = Math.min(100, (this.anomalyState.lastResult.threshold / (this.anomalyState.lastResult.threshold * 2.5)) * 100);
+            const ty = h - 20 - (threshPct / maxScore) * (h - 30);
+            ctx.strokeStyle = '#ef444480'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+            ctx.beginPath(); ctx.moveTo(30, ty); ctx.lineTo(w, ty); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#ef4444'; ctx.font = '8px monospace'; ctx.fillText('threshold', w - 50, ty - 3);
+        }
+
+        // Score line
+        ctx.beginPath();
+        scores.forEach((s, i) => {
+            const x = 30 + i * step;
+            const y = h - 20 - (s / maxScore) * (h - 30);
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = '#a78bfa'; ctx.lineWidth = 2; ctx.stroke();
+
+        // Fill under curve
+        const lastX = 30 + (scores.length - 1) * step;
+        ctx.lineTo(lastX, h - 20); ctx.lineTo(30, h - 20); ctx.closePath();
+        ctx.fillStyle = 'rgba(167,139,250,0.1)'; ctx.fill();
+
+        // Anomaly points
+        scores.forEach((s, i) => {
+            if (s > 40) {
+                const x = 30 + i * step;
+                const y = h - 20 - (s / maxScore) * (h - 30);
+                ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = s >= 60 ? '#ef4444' : '#f59e0b'; ctx.fill();
+            }
+        });
+    }
+
+    renderFeatureErrors(featureErrors) {
+        const container = document.getElementById('anomaly-feature-bars');
+        if (!container) return;
+        const entries = Object.entries(featureErrors);
+        if (!entries.length) { container.innerHTML = '<div class="anomaly-no-data">Waiting for data...</div>'; return; }
+
+        const maxErr = Math.max(...entries.map(e => e[1]), 0.001);
+        container.innerHTML = entries.map(([name, val]) => {
+            const pct = Math.min(100, (val / maxErr) * 100);
+            const cls = pct > 70 ? 'high' : pct > 40 ? 'med' : '';
+            const shortName = name.replace('network_', 'net_').replace('bottle_at_', '').replace('output_', 'out_');
+            return `<div class="anomaly-feat-row">
+                <span class="anomaly-feat-name" title="${name}">${shortName}</span>
+                <div class="anomaly-feat-bar-bg"><div class="anomaly-feat-bar ${cls}" style="width:${pct}%"></div></div>
+                <span class="anomaly-feat-val">${val.toFixed(4)}</span>
+            </div>`;
+        }).join('');
+    }
+
+    renderAttackProbs(probs) {
+        const container = document.getElementById('anomaly-attack-probs');
+        if (!container) return;
+        const entries = Object.entries(probs);
+        if (!entries.length) { container.innerHTML = '<div class="anomaly-no-data">No attack detected</div>'; return; }
+
+        container.innerHTML = entries.slice(0, 6).map(([name, prob]) => {
+            const pct = Math.round(prob * 100);
+            const label = name.replace(/_/g, ' ');
+            return `<div class="anomaly-attack-row">
+                <span class="anomaly-attack-name" title="${label}">${label}</span>
+                <div class="anomaly-attack-bar-bg"><div class="anomaly-attack-bar" style="width:${pct}%"></div></div>
+                <span class="anomaly-attack-pct">${pct}%</span>
+            </div>`;
+        }).join('');
     }
 
     // ── Ladder Logic ─────────────────────────────────────────────
@@ -1042,6 +1313,33 @@ class PLCEmulatorApp {
             const data = presets[name];
             if (!data) { console.warn('[PLC] Preset not found:', name); return; }
             this.engine.deserialize(data);
+
+            // 2. Load Ladder Logic (if defined), otherwise sync or default
+            if (data.ladder) {
+                console.log('[PLC] Loading custom ladder logic...');
+                // Convert JSON definition to LadderProgram instances
+                const program = new LadderProgram();
+                program.rungs = [];
+
+                data.ladder.forEach(rungDef => {
+                    const instructions = rungDef.map(inst =>
+                        new LadderInstruction(inst.type, inst.operands)
+                    );
+                    const rung = new LadderRung(instructions);
+                    // Check if the rungDef itself has a comment property, or if the first instruction has one
+                    if (rungDef.comment) rung.comment = rungDef.comment;
+                    else if (rungDef.length > 0 && rungDef[0].comment) rung.comment = rungDef[0].comment;
+                    program.addRung(rung);
+                });
+
+                this.ladderProgram = program; // Store the program
+                this.plc.setLadderProgram(program);
+            } else {
+                console.log('[PLC] No custom ladder found, syncing from layout...');
+                this.syncLadderFromLayout();
+            }
+
+            // 3. Update UI
             const comps = this.engine.getAllComponents();
             console.log('[PLC] Loaded', comps.length, 'components,', this.engine.getAllWires().length, 'wires');
             let maxId = 0;
@@ -1056,8 +1354,13 @@ class PLCEmulatorApp {
             this.renderPropertyPanel(null);
             const hint = document.getElementById('canvas-hint');
             if (hint) hint.style.display = 'none';
-            this.syncLadderFromLayout();
+
+            // 4. Force a UI refresh of the editor
+            if (this.editor && this.editor.update) {
+                this.editor.update();
+            }
             console.log('[PLC] Preset rendered successfully');
+
         } catch (err) {
             console.error('[PLC] loadPreset error:', err);
         }
@@ -1068,72 +1371,428 @@ class PLCEmulatorApp {
             bottle_factory: {
                 version: 1,
                 components: [
-                    { id: 'comp_1', type: 'conveyor', x: 200, y: 300, props: { address: '', label: 'Main Conv', speed: 1, length: 3 } },
-                    { id: 'comp_2', type: 'motor', x: 60, y: 290, props: { address: 'O:0/0', label: 'Conv Motor', ratedRPM: 1800 } },
-                    { id: 'comp_3', type: 'proximity_sensor', x: 340, y: 200, props: { address: 'I:0/3', label: 'Filler Sensor', detectRange: 10 } },
-                    { id: 'comp_4', type: 'solenoid_valve', x: 340, y: 100, props: { address: 'O:0/1', label: 'Fill Valve', type: '2-way' } },
-                    { id: 'comp_5', type: 'proximity_sensor', x: 500, y: 200, props: { address: 'I:0/4', label: 'Capper Sensor', detectRange: 10 } },
-                    { id: 'comp_6', type: 'motor', x: 500, y: 100, props: { address: 'O:0/2', label: 'Capper Motor', ratedRPM: 900 } },
-                    { id: 'comp_7', type: 'photo_sensor', x: 660, y: 200, props: { address: 'I:0/5', label: 'Quality Sensor', beamType: 'through' } },
-                    { id: 'comp_8', type: 'indicator_light', x: 660, y: 100, props: { address: 'O:0/3', label: 'Quality Light', color: 'green' } },
-                    { id: 'comp_9', type: 'solenoid_valve', x: 760, y: 200, props: { address: 'O:0/4', label: 'Reject Gate', type: '2-way' } },
-                    { id: 'comp_10', type: 'limit_switch', x: 60, y: 200, props: { address: 'I:0/1', label: 'Start SW' } },
-                    { id: 'comp_11', type: 'buzzer', x: 820, y: 100, props: { address: 'O:0/5', label: 'Alarm Horn' } },
-                    { id: 'comp_12', type: 'indicator_light', x: 820, y: 200, props: { address: 'O:0/7', label: 'Run Light', color: 'green' } },
-                    { id: 'comp_13', type: 'level_sensor', x: 200, y: 100, props: { address: 'I:0/6', label: 'Tank Level' } },
+                    // Control Station
+                    { id: 'sw_start', type: 'limit_switch', x: 40, y: 60, props: { address: 'I:0/1', label: 'START' } },
+                    { id: 'sw_stop', type: 'limit_switch', x: 120, y: 60, props: { address: 'I:0/0', label: 'STOP' } },
+                    { id: 'gate_not_stop', type: 'not_gate', x: 200, y: 50, props: { label: '!Stop' } },
+                    { id: 'gate_sys', type: 'and_gate', x: 280, y: 50, props: { label: 'Sys Rdy' } },
+                    // Conveyor Logic
+                    { id: 'gate_not_fill', type: 'not_gate', x: 200, y: 130, props: { label: '!Fill' } },
+                    { id: 'gate_not_cap', type: 'not_gate', x: 280, y: 130, props: { label: '!Cap' } },
+                    { id: 'gate_conv1', type: 'and_gate', x: 370, y: 110, props: { label: 'Conv1' } },
+                    { id: 'gate_conv2', type: 'and_gate', x: 460, y: 110, props: { label: 'Conv2' } },
+                    // Conveyor + Motor
+                    { id: 'motor_main', type: 'motor', x: 40, y: 280, props: { address: 'O:0/0', label: 'M_Conv', ratedRPM: 1800 } },
+                    { id: 'conv_main', type: 'conveyor', x: 180, y: 290, props: { label: 'Main Conv', speed: 1, length: 3 } },
+                    // Fill Station
+                    { id: 'sens_fill', type: 'proximity_sensor', x: 360, y: 280, props: { address: 'I:0/3', label: 'PE_Fill', detectRange: 10 } },
+                    { id: 'gate_fill', type: 'and_gate', x: 430, y: 200, props: { label: 'Fill En' } },
+                    { id: 'val_fill', type: 'solenoid_valve', x: 520, y: 200, props: { address: 'O:0/1', label: 'V_Fill', type: '2-way' } },
+                    { id: 'pipe_fill', type: 'pipe', x: 520, y: 280, props: { label: 'Fill Pipe' } },
+                    // Cap Station
+                    { id: 'sens_cap', type: 'proximity_sensor', x: 620, y: 280, props: { address: 'I:0/4', label: 'PE_Cap', detectRange: 10 } },
+                    { id: 'gate_cap', type: 'and_gate', x: 690, y: 200, props: { label: 'Cap En' } },
+                    { id: 'motor_cap', type: 'motor', x: 780, y: 200, props: { address: 'O:0/2', label: 'M_Cap', ratedRPM: 900 } },
+                    // Quality + Reject
+                    { id: 'sens_qual', type: 'photo_sensor', x: 860, y: 280, props: { address: 'I:0/5', label: 'PE_Qual', beamType: 'through' } },
+                    { id: 'light_qual', type: 'indicator_light', x: 860, y: 200, props: { address: 'O:0/3', label: 'L_Qual', color: 'green' } },
+                    { id: 'val_reject', type: 'solenoid_valve', x: 960, y: 200, props: { address: 'O:0/4', label: 'V_Reject', type: '2-way' } },
+                    { id: 'pipe_reject', type: 'pipe', x: 960, y: 280, props: { label: 'Reject' } },
+                    // Tank + Monitoring
+                    { id: 'sens_tank', type: 'level_sensor', x: 40, y: 400, props: { address: 'I:0/6', label: 'LT_Tank' } },
+                    { id: 'gauge_tank', type: 'gauge', x: 120, y: 400, props: { label: 'Tank Lvl', unit: '%' } },
+                    // Indicators
+                    { id: 'horn_alarm', type: 'buzzer', x: 1060, y: 200, props: { address: 'O:0/5', label: 'Horn' } },
+                    { id: 'light_run', type: 'indicator_light', x: 380, y: 50, props: { address: 'O:0/7', label: 'L_Run', color: 'green' } },
                 ],
                 wires: [
-                    { fromComp: 'comp_2', fromPort: 'running', toComp: 'comp_1', toPort: 'motor' },
-                    { fromComp: 'comp_10', fromPort: 'out', toComp: 'comp_2', toPort: 'run' },
-                    { fromComp: 'comp_3', fromPort: 'out', toComp: 'comp_4', toPort: 'cmd' },
-                    { fromComp: 'comp_5', fromPort: 'out', toComp: 'comp_6', toPort: 'run' },
-                    { fromComp: 'comp_7', fromPort: 'out', toComp: 'comp_8', toPort: 'cmd' }
+                    // Rung 0: System Ready = START AND NOT STOP
+                    { fromComp: 'sw_stop', fromPort: 'out', toComp: 'gate_not_stop', toPort: 'a' },
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'gate_sys', toPort: 'a' },
+                    { fromComp: 'gate_not_stop', fromPort: 'out', toComp: 'gate_sys', toPort: 'b' },
+                    { fromComp: 'gate_sys', fromPort: 'out', toComp: 'light_run', toPort: 'cmd' },
+                    // Rung 1: Conveyor = SysRdy AND NOT Filling AND NOT Capping
+                    { fromComp: 'val_fill', fromPort: 'state', toComp: 'gate_not_fill', toPort: 'a' },
+                    { fromComp: 'motor_cap', fromPort: 'running', toComp: 'gate_not_cap', toPort: 'a' },
+                    { fromComp: 'gate_sys', fromPort: 'out', toComp: 'gate_conv1', toPort: 'a' },
+                    { fromComp: 'gate_not_fill', fromPort: 'out', toComp: 'gate_conv1', toPort: 'b' },
+                    { fromComp: 'gate_conv1', fromPort: 'out', toComp: 'gate_conv2', toPort: 'a' },
+                    { fromComp: 'gate_not_cap', fromPort: 'out', toComp: 'gate_conv2', toPort: 'b' },
+                    { fromComp: 'gate_conv2', fromPort: 'out', toComp: 'motor_main', toPort: 'run' },
+                    { fromComp: 'motor_main', fromPort: 'running', toComp: 'conv_main', toPort: 'motor' },
+                    // Rung 2: Fill = SysRdy AND Fill Sensor
+                    { fromComp: 'gate_sys', fromPort: 'out', toComp: 'gate_fill', toPort: 'a' },
+                    { fromComp: 'sens_fill', fromPort: 'out', toComp: 'gate_fill', toPort: 'b' },
+                    { fromComp: 'gate_fill', fromPort: 'out', toComp: 'val_fill', toPort: 'cmd' },
+                    { fromComp: 'val_fill', fromPort: 'state', toComp: 'pipe_fill', toPort: 'in' },
+                    { fromComp: 'pipe_fill', fromPort: 'out', toComp: 'conv_main', toPort: 'item_in' },
+                    // Rung 3: Cap = SysRdy AND Cap Sensor
+                    { fromComp: 'gate_sys', fromPort: 'out', toComp: 'gate_cap', toPort: 'a' },
+                    { fromComp: 'sens_cap', fromPort: 'out', toComp: 'gate_cap', toPort: 'b' },
+                    { fromComp: 'gate_cap', fromPort: 'out', toComp: 'motor_cap', toPort: 'run' },
+                    // Rung 4: Quality + Reject
+                    { fromComp: 'sens_qual', fromPort: 'out', toComp: 'light_qual', toPort: 'cmd' },
+                    { fromComp: 'sens_qual', fromPort: 'out', toComp: 'val_reject', toPort: 'cmd' },
+                    { fromComp: 'val_reject', fromPort: 'state', toComp: 'pipe_reject', toPort: 'in' },
+                    // Monitoring
+                    { fromComp: 'sens_tank', fromPort: 'out', toComp: 'gauge_tank', toPort: 'value' },
+                    { fromComp: 'pipe_reject', fromPort: 'out', toComp: 'horn_alarm', toPort: 'cmd' },
+                ],
+                ladder: [
+                    [
+                        { type: 'XIC', operands: ['I:0/1'] },
+                        { type: 'XIO', operands: ['I:0/0'] },
+                        { type: 'OTE', operands: ['O:0/7'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['O:0/7'] },
+                        { type: 'XIO', operands: ['O:0/1'] },
+                        { type: 'XIO', operands: ['O:0/2'] },
+                        { type: 'OTE', operands: ['O:0/0'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['O:0/7'] },
+                        { type: 'XIC', operands: ['I:0/3'] },
+                        { type: 'OTE', operands: ['O:0/1'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['O:0/7'] },
+                        { type: 'XIC', operands: ['I:0/4'] },
+                        { type: 'OTE', operands: ['O:0/2'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['I:0/5'] },
+                        { type: 'OTE', operands: ['O:0/3'] }
+                    ]
                 ]
             },
             sorting_station: {
                 version: 1,
                 components: [
-                    { id: 'comp_1', type: 'conveyor', x: 100, y: 280, props: { address: '', label: 'Infeed Conv', speed: 1, length: 2 } },
-                    { id: 'comp_2', type: 'motor', x: 20, y: 270, props: { address: 'O:0/0', label: 'Infeed Motor' } },
-                    { id: 'comp_3', type: 'photo_sensor', x: 260, y: 200, props: { address: 'I:0/3', label: 'Color Sensor' } },
-                    { id: 'comp_4', type: 'pneumatic_cyl', x: 380, y: 200, props: { address: 'O:0/1', label: 'Diverter A' } },
-                    { id: 'comp_5', type: 'pneumatic_cyl', x: 520, y: 200, props: { address: 'O:0/2', label: 'Diverter B' } },
-                    { id: 'comp_6', type: 'conveyor', x: 380, y: 380, props: { address: '', label: 'Bin A Conv', speed: 1, length: 2 } },
-                    { id: 'comp_7', type: 'conveyor', x: 520, y: 380, props: { address: '', label: 'Bin B Conv', speed: 1, length: 2 } },
-                    { id: 'comp_8', type: 'counter_ctu', x: 700, y: 200, props: { label: 'Sort Count', preset: 100 } },
-                    { id: 'comp_9', type: 'indicator_light', x: 700, y: 300, props: { address: 'O:0/7', label: 'Status', color: 'green' } },
-                    { id: 'comp_10', type: 'limit_switch', x: 20, y: 180, props: { address: 'I:0/1', label: 'Start' } },
+                    // Control
+                    { id: 'sw_start', type: 'limit_switch', x: 20, y: 60, props: { address: 'I:0/1', label: 'START' } },
+                    { id: 'sw_stop', type: 'limit_switch', x: 100, y: 60, props: { address: 'I:0/0', label: 'STOP' } },
+                    // Infeed
+                    { id: 'motor_in', type: 'motor', x: 20, y: 200, props: { address: 'O:0/0', label: 'M_Infeed' } },
+                    { id: 'conv_in', type: 'conveyor', x: 140, y: 210, props: { label: 'Infeed', speed: 1, length: 2 } },
+                    // Detection
+                    { id: 'sens_color', type: 'photo_sensor', x: 300, y: 210, props: { address: 'I:0/3', label: 'PE_Color' } },
+                    // Path Logic
+                    { id: 'gate_not_color', type: 'not_gate', x: 380, y: 140, props: { label: '!Color' } },
+                    { id: 'gate_a', type: 'and_gate', x: 460, y: 100, props: { label: 'Path A' } },
+                    { id: 'gate_b', type: 'and_gate', x: 460, y: 180, props: { label: 'Path B' } },
+                    // Diverters
+                    { id: 'div_a', type: 'pneumatic_cyl', x: 560, y: 100, props: { address: 'O:0/1', label: 'Div_A' } },
+                    { id: 'div_b', type: 'pneumatic_cyl', x: 560, y: 180, props: { address: 'O:0/2', label: 'Div_B' } },
+                    // Path A
+                    { id: 'pipe_a', type: 'pipe', x: 660, y: 100, props: { label: 'Chute A' } },
+                    { id: 'motor_a', type: 'motor', x: 760, y: 80, props: { label: 'M_BinA' } },
+                    { id: 'conv_a', type: 'conveyor', x: 840, y: 90, props: { label: 'Bin A', speed: 1, length: 2 } },
+                    // Path B
+                    { id: 'pipe_b', type: 'pipe', x: 660, y: 200, props: { label: 'Chute B' } },
+                    { id: 'motor_b', type: 'motor', x: 760, y: 180, props: { label: 'M_BinB' } },
+                    { id: 'conv_b', type: 'conveyor', x: 840, y: 190, props: { label: 'Bin B', speed: 1, length: 2 } },
+                    // Counter + Indicators
+                    { id: 'counter_sort', type: 'counter_ctu', x: 300, y: 320, props: { label: 'Sorted', preset: 100 } },
+                    { id: 'light_a', type: 'indicator_light', x: 960, y: 80, props: { label: 'Bin A', color: 'green' } },
+                    { id: 'light_b', type: 'indicator_light', x: 960, y: 190, props: { label: 'Bin B', color: 'blue' } },
+                    { id: 'light_status', type: 'indicator_light', x: 400, y: 320, props: { address: 'O:0/7', label: 'Done', color: 'yellow' } },
                 ],
                 wires: [
-                    { fromComp: 'comp_2', fromPort: 'running', toComp: 'comp_1', toPort: 'motor' },
-                    { fromComp: 'comp_10', fromPort: 'out', toComp: 'comp_2', toPort: 'run' },
-                    { fromComp: 'comp_3', fromPort: 'out', toComp: 'comp_4', toPort: 'extend' },
-                    { fromComp: 'comp_3', fromPort: 'out', toComp: 'comp_8', toPort: 'count' }
+                    // Infeed: Start → Motor → Conveyor
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'motor_in', toPort: 'run' },
+                    { fromComp: 'motor_in', fromPort: 'running', toComp: 'conv_in', toPort: 'motor' },
+                    // Path selection logic
+                    { fromComp: 'sens_color', fromPort: 'out', toComp: 'gate_a', toPort: 'a' },
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'gate_a', toPort: 'b' },
+                    { fromComp: 'sens_color', fromPort: 'out', toComp: 'gate_not_color', toPort: 'a' },
+                    { fromComp: 'gate_not_color', fromPort: 'out', toComp: 'gate_b', toPort: 'a' },
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'gate_b', toPort: 'b' },
+                    // Diverters
+                    { fromComp: 'gate_a', fromPort: 'out', toComp: 'div_a', toPort: 'extend' },
+                    { fromComp: 'gate_b', fromPort: 'out', toComp: 'div_b', toPort: 'extend' },
+                    // Path A flow: Diverter → Pipe → Motor → Conveyor
+                    { fromComp: 'div_a', fromPort: 'ext_fb', toComp: 'pipe_a', toPort: 'in' },
+                    { fromComp: 'gate_a', fromPort: 'out', toComp: 'motor_a', toPort: 'run' },
+                    { fromComp: 'motor_a', fromPort: 'running', toComp: 'conv_a', toPort: 'motor' },
+                    { fromComp: 'pipe_a', fromPort: 'out', toComp: 'conv_a', toPort: 'item_in' },
+                    // Path B flow: Diverter → Pipe → Motor → Conveyor
+                    { fromComp: 'div_b', fromPort: 'ext_fb', toComp: 'pipe_b', toPort: 'in' },
+                    { fromComp: 'gate_b', fromPort: 'out', toComp: 'motor_b', toPort: 'run' },
+                    { fromComp: 'motor_b', fromPort: 'running', toComp: 'conv_b', toPort: 'motor' },
+                    { fromComp: 'pipe_b', fromPort: 'out', toComp: 'conv_b', toPort: 'item_in' },
+                    // Counter + indicators
+                    { fromComp: 'sens_color', fromPort: 'out', toComp: 'counter_sort', toPort: 'count' },
+                    { fromComp: 'gate_a', fromPort: 'out', toComp: 'light_a', toPort: 'cmd' },
+                    { fromComp: 'gate_b', fromPort: 'out', toComp: 'light_b', toPort: 'cmd' },
+                    { fromComp: 'counter_sort', fromPort: 'done', toComp: 'light_status', toPort: 'cmd' },
+                ],
+                ladder: [
+                    [
+                        { type: 'XIC', operands: ['I:0/1'] },
+                        { type: 'OTE', operands: ['O:0/0'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['I:0/3'] },
+                        { type: 'OTE', operands: ['O:0/1'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['O:0/1'] },
+                        { type: 'OTE', operands: ['O:0/7'] }
+                    ]
                 ]
             },
             mixing_process: {
                 version: 1,
                 components: [
-                    { id: 'comp_1', type: 'tank', x: 100, y: 100, props: { address: '', label: 'Feed Tank', capacity: 100, fillRate: 10, drainRate: 8 } },
-                    { id: 'comp_2', type: 'pump', x: 100, y: 320, props: { address: 'O:0/0', label: 'Feed Pump' } },
-                    { id: 'comp_3', type: 'solenoid_valve', x: 260, y: 120, props: { address: 'O:0/1', label: 'Inlet Valve' } },
-                    { id: 'comp_4', type: 'tank', x: 400, y: 100, props: { address: '', label: 'Mix Tank', capacity: 200, fillRate: 8, drainRate: 6 } },
-                    { id: 'comp_5', type: 'mixer', x: 400, y: 320, props: { address: 'O:0/2', label: 'Agitator' } },
-                    { id: 'comp_6', type: 'temp_sensor', x: 540, y: 120, props: { address: 'I:0/3', label: 'Temp' } },
-                    { id: 'comp_7', type: 'heater', x: 540, y: 240, props: { address: 'O:0/3', label: 'Heater' } },
-                    { id: 'comp_8', type: 'solenoid_valve', x: 540, y: 340, props: { address: 'O:0/4', label: 'Outlet Valve' } },
-                    { id: 'comp_9', type: 'level_sensor', x: 260, y: 240, props: { address: 'I:0/4', label: 'Feed Level' } },
-                    { id: 'comp_10', type: 'level_sensor', x: 660, y: 120, props: { address: 'I:0/5', label: 'Mix Level' } },
-                    { id: 'comp_11', type: 'gauge', x: 660, y: 240, props: { label: 'Temp Gauge', min: 0, max: 200, unit: '°C' } },
-                    { id: 'comp_12', type: 'indicator_light', x: 660, y: 340, props: { address: 'O:0/7', label: 'Ready', color: 'green' } },
-                    { id: 'comp_13', type: 'gauge', x: 200, y: 320, props: { label: 'Feed Lvl', min: 0, max: 100, unit: '%' } },
-                    { id: 'comp_14', type: 'gauge', x: 500, y: 320, props: { label: 'Mix Lvl', min: 0, max: 200, unit: '%' } },
+                    // Control
+                    { id: 'sw_start', type: 'limit_switch', x: 40, y: 250, props: { address: 'I:0/1', label: 'START' } },
+                    { id: 'sw_heat', type: 'limit_switch', x: 40, y: 330, props: { address: 'I:0/2', label: 'Heat' } },
+                    // Feed side
+                    { id: 'tk_feed', type: 'tank', x: 120, y: 60, props: { label: 'Feed Tank', capacity: 100 } },
+                    { id: 'pump_feed', type: 'pump', x: 120, y: 250, props: { address: 'O:0/0', label: 'P_Feed' } },
+                    { id: 'pipe_feed', type: 'pipe', x: 240, y: 180, props: { label: 'Feed Pipe' } },
+                    { id: 'val_in', type: 'solenoid_valve', x: 340, y: 120, props: { address: 'O:0/1', label: 'V_Inlet' } },
+                    { id: 'pipe_inlet', type: 'pipe', x: 340, y: 180, props: { label: 'Inlet' } },
+                    // Mix side
+                    { id: 'tk_mix', type: 'tank', x: 440, y: 60, props: { label: 'Mix Tank', capacity: 200 } },
+                    { id: 'mixer_ag', type: 'mixer', x: 440, y: 250, props: { address: 'O:0/2', label: 'Agitator' } },
+                    { id: 'heater_main', type: 'heater', x: 560, y: 180, props: { address: 'O:0/3', label: 'Heater' } },
+                    // Drain
+                    { id: 'val_drain', type: 'solenoid_valve', x: 560, y: 250, props: { address: 'O:0/4', label: 'V_Drain' } },
+                    { id: 'pipe_drain', type: 'pipe', x: 560, y: 320, props: { label: 'Drain' } },
+                    // Sensors
+                    { id: 'temp_sens', type: 'temp_sensor', x: 560, y: 60, props: { address: 'I:0/3', label: 'Temp' } },
+                    // Monitoring
+                    { id: 'gauge_feed', type: 'gauge', x: 220, y: 60, props: { label: 'Feed Lvl', unit: '%' } },
+                    { id: 'gauge_mix', type: 'gauge', x: 540, y: 60, props: { label: 'Mix Lvl', unit: '%' } },
+                    { id: 'gauge_temp', type: 'gauge', x: 660, y: 60, props: { label: 'Temp', unit: '°C' } },
+                    // Logic
+                    { id: 'gate_alarm_or', type: 'or_gate', x: 660, y: 180, props: { label: 'Alarm' } },
+                    { id: 'gate_process', type: 'and_gate', x: 660, y: 250, props: { label: 'Process' } },
+                    // Indicators
+                    { id: 'horn_alarm', type: 'buzzer', x: 760, y: 180, props: { address: 'O:0/5', label: 'Horn' } },
+                    { id: 'light_heat', type: 'indicator_light', x: 660, y: 330, props: { label: 'Heat On', color: 'red' } },
+                    { id: 'light_run', type: 'indicator_light', x: 760, y: 330, props: { address: 'O:0/7', label: 'Running', color: 'green' } },
+                    { id: 'disp_status', type: 'display_7seg', x: 760, y: 250, props: { label: 'Status', digits: 3 } },
                 ],
                 wires: [
-                    { fromComp: 'comp_1', fromPort: 'level', toComp: 'comp_13', toPort: 'value' },
-                    { fromComp: 'comp_3', fromPort: 'state', toComp: 'comp_4', toPort: 'inlet' },
-                    { fromComp: 'comp_4', fromPort: 'level', toComp: 'comp_14', toPort: 'value' },
-                    { fromComp: 'comp_6', fromPort: 'out', toComp: 'comp_11', toPort: 'value' }
+                    // Feed flow: Start → Pump → Pipe → Valve → Pipe → Mix Tank
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'pump_feed', toPort: 'run' },
+                    { fromComp: 'pump_feed', fromPort: 'running', toComp: 'tk_feed', toPort: 'outlet' },
+                    { fromComp: 'pump_feed', fromPort: 'running', toComp: 'pipe_feed', toPort: 'in' },
+                    { fromComp: 'pipe_feed', fromPort: 'out', toComp: 'val_in', toPort: 'cmd' },
+                    { fromComp: 'val_in', fromPort: 'state', toComp: 'pipe_inlet', toPort: 'in' },
+                    { fromComp: 'pipe_inlet', fromPort: 'out', toComp: 'tk_mix', toPort: 'inlet' },
+                    // Heat: Heat SW → Heater → Mixer + Indicator
+                    { fromComp: 'sw_heat', fromPort: 'out', toComp: 'heater_main', toPort: 'cmd' },
+                    { fromComp: 'heater_main', fromPort: 'active', toComp: 'mixer_ag', toPort: 'motor' },
+                    { fromComp: 'heater_main', fromPort: 'active', toComp: 'light_heat', toPort: 'cmd' },
+                    // Running indicator
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'light_run', toPort: 'cmd' },
+                    // Monitoring gauges
+                    { fromComp: 'tk_feed', fromPort: 'level', toComp: 'gauge_feed', toPort: 'value' },
+                    { fromComp: 'tk_mix', fromPort: 'level', toComp: 'gauge_mix', toPort: 'value' },
+                    { fromComp: 'temp_sens', fromPort: 'out', toComp: 'gauge_temp', toPort: 'value' },
+                    // Drain: Mix full → Drain valve → Pipe → recirculate to Feed
+                    { fromComp: 'tk_mix', fromPort: 'full', toComp: 'val_drain', toPort: 'cmd' },
+                    { fromComp: 'val_drain', fromPort: 'state', toComp: 'pipe_drain', toPort: 'in' },
+                    { fromComp: 'pipe_drain', fromPort: 'out', toComp: 'tk_feed', toPort: 'inlet' },
+                    // Alarm logic: Feed empty OR Mix full → Horn
+                    { fromComp: 'tk_feed', fromPort: 'empty', toComp: 'gate_alarm_or', toPort: 'a' },
+                    { fromComp: 'tk_mix', fromPort: 'full', toComp: 'gate_alarm_or', toPort: 'b' },
+                    { fromComp: 'gate_alarm_or', fromPort: 'out', toComp: 'horn_alarm', toPort: 'cmd' },
+                    // Process status: Pump AND Heater → Display
+                    { fromComp: 'pump_feed', fromPort: 'running', toComp: 'gate_process', toPort: 'a' },
+                    { fromComp: 'heater_main', fromPort: 'active', toComp: 'gate_process', toPort: 'b' },
+                    { fromComp: 'gate_process', fromPort: 'out', toComp: 'disp_status', toPort: 'value' },
+                ],
+                ladder: [
+                    [
+                        { type: 'XIC', operands: ['I:0/1'] },
+                        { type: 'OTE', operands: ['O:0/7'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['I:0/1'] },
+                        { type: 'OTE', operands: ['O:0/0'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['O:0/0'] },
+                        { type: 'OTE', operands: ['O:0/1'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['I:0/2'] },
+                        { type: 'OTE', operands: ['O:0/3'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['O:0/3'] },
+                        { type: 'OTE', operands: ['O:0/2'] }
+                    ]
+                ]
+            },
+            conveyor_merge: {
+                version: 1,
+                components: [
+                    // Physical System: Conveyors
+                    { id: 'conv_main', type: 'conveyor', x: 380, y: 380, props: { label: 'Main Line', length: 5 } },
+                    { id: 'conv_a', type: 'conveyor', x: 200, y: 300, props: { label: 'Ln A', length: 2 } },
+                    { id: 'conv_b', type: 'conveyor', x: 560, y: 300, props: { label: 'Ln B', length: 2 } },
+
+                    { id: 'motor_main', type: 'motor', x: 380, y: 280, props: { label: 'Main Mtr' } },
+                    { id: 'motor_a', type: 'motor', x: 200, y: 200, props: { label: 'Mtr A' } },
+                    { id: 'motor_b', type: 'motor', x: 560, y: 200, props: { label: 'Mtr B' } },
+
+                    // Logic: Sequencer
+                    { id: 'sw_sys', type: 'limit_switch', x: 40, y: 60, props: { label: 'System Start', normallyOpen: true } },
+                    { id: 'latch_run', type: 'sr_latch', x: 160, y: 60, props: { label: 'Auto Mode' } },
+
+                    // Timers for sequencing (Traffic Light Logic)
+                    // T1: Run Line A (Green)
+                    // T2: Gap / Clearance (Yellow)
+                    // T3: Run Line B (Red / Green B)
+                    // T4: Gap / Clearance (Yellow)
+
+                    { id: 'tmr_a', type: 'timer_ton', x: 300, y: 60, props: { label: 'Run A', preset: 4000 } },
+                    { id: 'tmr_gap1', type: 'timer_ton', x: 440, y: 60, props: { label: 'Gap 1', preset: 1500 } },
+                    { id: 'tmr_b', type: 'timer_ton', x: 580, y: 60, props: { label: 'Run B', preset: 4000 } },
+                    { id: 'tmr_gap2', type: 'timer_ton', x: 720, y: 60, props: { label: 'Gap 2', preset: 1500 } },
+
+                    // Logic Loop Control
+                    { id: 'gate_loop_not', type: 'not_gate', x: 40, y: 160, props: { label: '!Loop' } },
+                    { id: 'gate_loop_and', type: 'and_gate', x: 160, y: 160, props: { label: 'Loop En' } },
+
+                    // Output Control Logic
+                    // Line A active only during T1
+                    { id: 'gate_run_a_not', type: 'not_gate', x: 300, y: 160, props: { label: '!Done' } },
+                    { id: 'gate_run_a_and', type: 'and_gate', x: 300, y: 240, props: { label: 'Drive A' } },
+
+                    // Line B active only during T3 (between Gap 1 Done and Run B Done)
+                    { id: 'gate_run_b_not', type: 'not_gate', x: 580, y: 160, props: { label: '!Done' } },
+                    { id: 'gate_run_b_and', type: 'and_gate', x: 580, y: 240, props: { label: 'Drive B' } },
+
+                    // Indicators
+                    { id: 'light_a', type: 'indicator_light', x: 260, y: 380, props: { label: 'Ln A Active', color: 'green' } },
+                    { id: 'light_b', type: 'indicator_light', x: 620, y: 380, props: { label: 'Ln B Active', color: 'blue' } },
+                    { id: 'light_warn', type: 'indicator_light', x: 440, y: 380, props: { label: 'Gap / Clear', color: 'yellow' } },
+
+                    // Gap Logic (OR gate for warning light)
+                    // Gap 1 running OR Gap 2 running
+                    // Keep it simple: Warning light on when NEITHER A nor B is running?
+                    // Actually, let's use the timer Done bits directly for the simple version.
+                    // Warn = (T1.Done AND !T2.Done) OR (T3.Done AND !T4.Done)
+                    // Implementation below simplifies: Warn on when A and B represent gaps. 
+                    { id: 'gate_warn_or', type: 'or_gate', x: 440, y: 280, props: { label: 'Warn' } }
+
+                ],
+                wires: [
+                    // System Start Latch
+                    { fromComp: 'sw_sys', fromPort: 'out', toComp: 'latch_run', toPort: 'set' },
+
+                    // Loop Sequence: Latch -> T1 -> T2 -> T3 -> T4 -> Loop
+                    { fromComp: 'latch_run', fromPort: 'q', toComp: 'gate_loop_and', toPort: 'a' },
+                    { fromComp: 'tmr_gap2', fromPort: 'done', toComp: 'gate_loop_not', toPort: 'a' },
+                    { fromComp: 'gate_loop_not', fromPort: 'out', toComp: 'gate_loop_and', toPort: 'b' },
+
+                    { fromComp: 'gate_loop_and', fromPort: 'out', toComp: 'tmr_a', toPort: 'enable' },
+                    { fromComp: 'tmr_a', fromPort: 'done', toComp: 'tmr_gap1', toPort: 'enable' },
+                    { fromComp: 'tmr_gap1', fromPort: 'done', toComp: 'tmr_b', toPort: 'enable' },
+                    { fromComp: 'tmr_b', fromPort: 'done', toComp: 'tmr_gap2', toPort: 'enable' },
+
+                    // Drive Logic Line A: (Loop Active) AND (!T1.Done)
+                    { fromComp: 'gate_loop_and', fromPort: 'out', toComp: 'gate_run_a_and', toPort: 'a' },
+                    { fromComp: 'tmr_a', fromPort: 'done', toComp: 'gate_run_a_not', toPort: 'a' },
+                    { fromComp: 'gate_run_a_not', fromPort: 'out', toComp: 'gate_run_a_and', toPort: 'b' },
+                    { fromComp: 'gate_run_a_and', fromPort: 'out', toComp: 'motor_a', toPort: 'run' },
+                    { fromComp: 'gate_run_a_and', fromPort: 'out', toComp: 'light_a', toPort: 'cmd' },
+
+                    // Drive Logic Line B: (T2.Done) AND (!T3.Done)
+                    { fromComp: 'tmr_gap1', fromPort: 'done', toComp: 'gate_run_b_and', toPort: 'a' },
+                    { fromComp: 'tmr_b', fromPort: 'done', toComp: 'gate_run_b_not', toPort: 'a' },
+                    { fromComp: 'gate_run_b_not', fromPort: 'out', toComp: 'gate_run_b_and', toPort: 'b' },
+                    { fromComp: 'gate_run_b_and', fromPort: 'out', toComp: 'motor_b', toPort: 'run' },
+                    { fromComp: 'gate_run_b_and', fromPort: 'out', toComp: 'light_b', toPort: 'cmd' },
+
+                    // Main Motor Always On when System Run
+                    { fromComp: 'latch_run', fromPort: 'q', toComp: 'motor_main', toPort: 'run' },
+
+                    // Conveyors driven by motors
+                    { fromComp: 'motor_main', fromPort: 'running', toComp: 'conv_main', toPort: 'motor' },
+                    { fromComp: 'motor_a', fromPort: 'running', toComp: 'conv_a', toPort: 'motor' },
+                    { fromComp: 'motor_b', fromPort: 'running', toComp: 'conv_b', toPort: 'motor' },
+
+                    // Warning Logic: (T1.Don AND !T2.Done) OR (T3.Done AND !T4.Done)
+                    // ...Simpler: Warn is on during gaps. But let's simplify for the preset wires count.
+                    // Just wire the gap timers 'elapsed' > 0 to light? No, simplistic.
+                    // Let's wire T1.Done -> OR -> Light. T3.Done -> OR -> Light. 
+                    // This lights up warning continuously after T1 finishes until end? 
+                    // No, let's just make Warn light blink when NEITHER motor is running?
+                    // Too complex for preset. Let's just wire T1.Done and T3.Done to OR for now to show transition.
+                    { fromComp: 'tmr_a', fromPort: 'done', toComp: 'gate_warn_or', toPort: 'a' },
+                    { fromComp: 'tmr_b', fromPort: 'done', toComp: 'gate_warn_or', toPort: 'b' },
+                    { fromComp: 'gate_warn_or', fromPort: 'out', toComp: 'light_warn', toPort: 'cmd' }
+
+                ]
+            },
+            cip_sequence: {
+                version: 1,
+                components: [
+                    { id: 'tk_src', type: 'tank', x: 100, y: 50, props: { label: 'Water', capacity: 200 } },
+                    { id: 'tk_chem', type: 'tank', x: 250, y: 50, props: { label: 'Chem', capacity: 100 } },
+                    { id: 'v_water', type: 'solenoid_valve', x: 100, y: 150, props: { label: 'V_Wtr' } },
+                    { id: 'v_chem', type: 'solenoid_valve', x: 250, y: 150, props: { label: 'V_Chm' } },
+                    { id: 'pipe_mix', type: 'pipe', x: 180, y: 220, props: { label: 'Manifold' } },
+                    { id: 'p_main', type: 'pump', x: 180, y: 280, props: { label: 'Main Pump' } },
+                    { id: 'tk_dest', type: 'tank', x: 180, y: 400, props: { label: 'CIP Tank', capacity: 500 } },
+
+                    { id: 'sw_start', type: 'limit_switch', x: 400, y: 50, props: { label: 'Start' } },
+                    { id: 'latch_run', type: 'sr_latch', x: 520, y: 50, props: { label: 'Seq Run' } },
+
+                    { id: 'tmr_rinse1', type: 'timer_ton', x: 400, y: 150, props: { label: 'Rinse 1', preset: 4000 } },
+                    { id: 'tmr_wash', type: 'timer_ton', x: 540, y: 150, props: { label: 'Wash', preset: 4000 } },
+                    { id: 'tmr_rinse2', type: 'timer_ton', x: 680, y: 150, props: { label: 'Rinse 2', preset: 4000 } },
+
+                    { id: 'gate_rinse1_not', type: 'not_gate', x: 400, y: 250, props: { label: '!Done' } },
+
+                    { id: 'gate_wash_not', type: 'not_gate', x: 540, y: 250, props: { label: '!Done' } },
+                    { id: 'gate_chem_and', type: 'and_gate', x: 540, y: 350, props: { label: 'Chem Vlv' } },
+
+                    { id: 'gate_rinse2_not', type: 'not_gate', x: 680, y: 250, props: { label: '!Done' } },
+
+                    { id: 'gate_wtr_or', type: 'or_gate', x: 300, y: 350, props: { label: 'Wtr Vlv' } },
+                    { id: 'gate_wtr_ph1', type: 'and_gate', x: 400, y: 350, props: { label: 'Ph 1' } },
+                    { id: 'gate_wtr_ph3', type: 'and_gate', x: 680, y: 350, props: { label: 'Ph 3' } },
+                    { id: 'gate_pipe_or', type: 'or_gate', x: 180, y: 350, props: { label: 'Pipe In' } }
+                ],
+                wires: [
+                    { fromComp: 'sw_start', fromPort: 'out', toComp: 'latch_run', toPort: 'set' },
+                    { fromComp: 'tmr_rinse2', fromPort: 'done', toComp: 'latch_run', toPort: 'reset' },
+
+                    { fromComp: 'latch_run', fromPort: 'q', toComp: 'tmr_rinse1', toPort: 'enable' },
+                    { fromComp: 'tmr_rinse1', fromPort: 'done', toComp: 'tmr_wash', toPort: 'enable' },
+                    { fromComp: 'tmr_wash', fromPort: 'done', toComp: 'tmr_rinse2', toPort: 'enable' },
+
+                    { fromComp: 'latch_run', fromPort: 'q', toComp: 'p_main', toPort: 'run' },
+
+                    { fromComp: 'tmr_rinse1', fromPort: 'done', toComp: 'gate_chem_and', toPort: 'a' },
+                    { fromComp: 'tmr_wash', fromPort: 'done', toComp: 'gate_wash_not', toPort: 'a' },
+                    { fromComp: 'gate_wash_not', fromPort: 'out', toComp: 'gate_chem_and', toPort: 'b' },
+                    { fromComp: 'gate_chem_and', fromPort: 'out', toComp: 'v_chem', toPort: 'cmd' },
+
+                    { fromComp: 'latch_run', fromPort: 'q', toComp: 'gate_wtr_ph1', toPort: 'a' },
+                    { fromComp: 'tmr_rinse1', fromPort: 'done', toComp: 'gate_rinse1_not', toPort: 'a' },
+                    { fromComp: 'gate_rinse1_not', fromPort: 'out', toComp: 'gate_wtr_ph1', toPort: 'b' },
+
+                    { fromComp: 'tmr_wash', fromPort: 'done', toComp: 'gate_wtr_ph3', toPort: 'a' },
+                    { fromComp: 'tmr_rinse2', fromPort: 'done', toComp: 'gate_rinse2_not', toPort: 'a' },
+                    { fromComp: 'gate_rinse2_not', fromPort: 'out', toComp: 'gate_wtr_ph3', toPort: 'b' },
+
+                    { fromComp: 'gate_wtr_ph1', fromPort: 'out', toComp: 'gate_wtr_or', toPort: 'a' },
+                    { fromComp: 'gate_wtr_ph3', fromPort: 'out', toComp: 'gate_wtr_or', toPort: 'b' },
+                    { fromComp: 'gate_wtr_or', fromPort: 'out', toComp: 'v_water', toPort: 'cmd' },
+
+                    { fromComp: 'v_water', fromPort: 'state', toComp: 'gate_pipe_or', toPort: 'a' },
+                    { fromComp: 'v_chem', fromPort: 'state', toComp: 'gate_pipe_or', toPort: 'b' },
+                    { fromComp: 'gate_pipe_or', fromPort: 'out', toComp: 'pipe_mix', toPort: 'in' }
                 ]
             }
         };

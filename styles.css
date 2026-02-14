@@ -954,3 +954,114 @@ h2 {
     .attack-list { grid-template-columns: 1fr; }
     .packet-stats-row { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── LSTM Anomaly Detection Panel ────────────────────────── */
+.anomaly-section {
+    background: #0d1424;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    margin: 12px;
+    padding: 16px;
+}
+.anomaly-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; flex-wrap: wrap; gap: 8px;
+}
+.anomaly-header h2 { font-size: 1.1rem; color: #a78bfa; }
+.anomaly-header-controls { display: flex; gap: 10px; align-items: center; }
+.anomaly-model-badge {
+    background: #1e1b4b; color: #a78bfa; padding: 3px 10px; border-radius: 12px;
+    font-size: 0.72rem; font-weight: 600; border: 1px solid #4c1d95;
+}
+.anomaly-status-badge {
+    padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 600;
+    background: #1e293b; color: #64748b; border: 1px solid #334155;
+    transition: all 0.3s;
+}
+.anomaly-status-badge.normal { background: #064e3b; color: #34d399; border-color: #059669; }
+.anomaly-status-badge.warning { background: #78350f; color: #fbbf24; border-color: #d97706; }
+.anomaly-status-badge.anomaly { background: #7f1d1d; color: #f87171; border-color: #dc2626;
+    animation: anomalyPulse 1s ease-in-out infinite; }
+@keyframes anomalyPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(248,113,113,0.3); }
+    50% { box-shadow: 0 0 12px rgba(248,113,113,0.6); }
+}
+
+.anomaly-layout {
+    display: grid; grid-template-columns: 240px 1fr 280px; gap: 14px;
+}
+
+/* Score panel */
+.anomaly-score-panel, .anomaly-chart-panel, .anomaly-features-panel {
+    background: #111827; border: 1px solid #1e293b; border-radius: 10px; padding: 12px;
+}
+.anomaly-score-panel h3, .anomaly-chart-panel h3, .anomaly-features-panel h3 {
+    font-size: 0.78rem; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.anomaly-gauge-wrap { text-align: center; margin-bottom: 8px; }
+#anomaly-gauge-canvas { display: block; margin: 0 auto; }
+.anomaly-score-value {
+    font-size: 2rem; font-weight: 700; color: #e2e8f0; margin-top: -8px;
+    transition: color 0.3s;
+}
+.anomaly-score-value.high { color: #f87171; }
+.anomaly-score-value.medium { color: #fbbf24; }
+.anomaly-score-value.low { color: #34d399; }
+.anomaly-score-label { font-size: 0.68rem; color: #64748b; }
+.anomaly-stats-row {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0;
+}
+.anomaly-stat { text-align: center; }
+.anomaly-stat-label { display: block; font-size: 0.62rem; color: #64748b; text-transform: uppercase; }
+.anomaly-stat-value { display: block; font-size: 0.78rem; font-weight: 600; color: #cbd5e1; }
+.anomaly-verdict {
+    text-align: center; padding: 6px 10px; border-radius: 8px; font-size: 0.75rem;
+    font-weight: 600; background: #1e293b; color: #64748b; transition: all 0.3s;
+}
+.anomaly-verdict.normal { background: #064e3b; color: #34d399; }
+.anomaly-verdict.anomaly { background: #7f1d1d; color: #f87171; }
+
+/* History chart */
+#anomaly-history-canvas { width: 100%; height: 180px; display: block; }
+
+/* Feature bars */
+.anomaly-feature-bars { display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow-y: auto; }
+.anomaly-feat-row {
+    display: grid; grid-template-columns: 100px 1fr 50px; gap: 6px; align-items: center;
+    font-size: 0.68rem;
+}
+.anomaly-feat-name { color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.anomaly-feat-bar-bg {
+    height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden;
+}
+.anomaly-feat-bar {
+    height: 100%; border-radius: 4px; transition: width 0.3s, background 0.3s;
+    background: #3b82f6; min-width: 1px;
+}
+.anomaly-feat-bar.high { background: #ef4444; }
+.anomaly-feat-bar.med { background: #f59e0b; }
+.anomaly-feat-val { color: #64748b; text-align: right; font-family: monospace; font-size: 0.62rem; }
+
+/* Attack probabilities */
+.anomaly-attack-probs { display: flex; flex-direction: column; gap: 4px; }
+.anomaly-attack-row {
+    display: grid; grid-template-columns: 110px 1fr 40px; gap: 6px; align-items: center;
+    font-size: 0.68rem;
+}
+.anomaly-attack-name { color: #c4b5fd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.anomaly-attack-bar-bg { height: 10px; background: #1e293b; border-radius: 5px; overflow: hidden; }
+.anomaly-attack-bar {
+    height: 100%; border-radius: 5px; background: linear-gradient(90deg, #7c3aed, #a78bfa);
+    transition: width 0.3s;
+}
+.anomaly-attack-pct { color: #94a3b8; text-align: right; font-family: monospace; }
+.anomaly-no-data { text-align: center; color: #475569; font-size: 0.72rem; font-style: italic; padding: 8px; }
+
+@media (max-width: 1100px) {
+    .anomaly-layout { grid-template-columns: 1fr 1fr; }
+    .anomaly-features-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 768px) {
+    .anomaly-layout { grid-template-columns: 1fr; }
+}

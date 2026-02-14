@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PLC Factory Emulator</title>
     <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
     <div class="app-container">
         <!-- ── Header ─────────────────────────────────────────── -->
@@ -65,6 +67,8 @@
                     <option value="bottle_factory">Bottle Factory Line</option>
                     <option value="sorting_station">Sorting Station</option>
                     <option value="mixing_process">Mixing Process</option>
+                    <option value="conveyor_merge">Conveyor Merge Control</option>
+                    <option value="cip_sequence">CIP Cleaning Cycle</option>
                 </select>
                 <button id="load-preset-btn" class="tool-btn">Load</button>
             </div>
@@ -198,7 +202,8 @@
                 <h2>🛡️ Attack Simulation Lab</h2>
                 <div class="attack-header-controls">
                     <span class="attack-status" id="attack-status">No attacks active</span>
-                    <button id="attack-reset-btn" class="control-btn" title="Deactivate all attacks">🛑 Reset All</button>
+                    <button id="attack-reset-btn" class="control-btn" title="Deactivate all attacks">🛑 Reset
+                        All</button>
                 </div>
             </div>
 
@@ -246,15 +251,21 @@
                     <div class="packet-bars">
                         <div class="packet-bar-row">
                             <span class="bar-label">Normal</span>
-                            <div class="bar-track"><div class="bar-fill bar-normal" id="bar-normal" style="width:100%"></div></div>
+                            <div class="bar-track">
+                                <div class="bar-fill bar-normal" id="bar-normal" style="width:100%"></div>
+                            </div>
                         </div>
                         <div class="packet-bar-row">
                             <span class="bar-label">Burst</span>
-                            <div class="bar-track"><div class="bar-fill bar-burst" id="bar-burst" style="width:0%"></div></div>
+                            <div class="bar-track">
+                                <div class="bar-fill bar-burst" id="bar-burst" style="width:0%"></div>
+                            </div>
                         </div>
                         <div class="packet-bar-row">
                             <span class="bar-label">Malicious</span>
-                            <div class="bar-track"><div class="bar-fill bar-malicious" id="bar-malicious" style="width:0%"></div></div>
+                            <div class="bar-track">
+                                <div class="bar-fill bar-malicious" id="bar-malicious" style="width:0%"></div>
+                            </div>
                         </div>
                     </div>
                     <div class="packet-log" id="packet-log">
@@ -275,16 +286,78 @@
                         </div>
                     </div>
                     <div class="analysis-detail">
-                        <div class="explainability-row"><span>Risk Level</span><strong id="risk-level" class="risk-pill risk-low">LOW</strong></div>
-                        <div class="explainability-row"><span>Security Flag</span><strong id="security-flag">CLEAR</strong></div>
-                        <div class="explainability-row"><span>Action</span><strong id="recommended-action" class="action-text">Continue baseline monitoring.</strong></div>
+                        <div class="explainability-row"><span>Risk Level</span><strong id="risk-level"
+                                class="risk-pill risk-low">LOW</strong></div>
+                        <div class="explainability-row"><span>Security Flag</span><strong
+                                id="security-flag">CLEAR</strong></div>
+                        <div class="explainability-row"><span>Action</span><strong id="recommended-action"
+                                class="action-text">Continue baseline monitoring.</strong></div>
                     </div>
-                    <div class="component-block"><h4>Process Score Components</h4><div id="process-components" class="component-list"></div></div>
-                    <div class="component-block"><h4>Network Score Components</h4><div id="network-components" class="component-list"></div></div>
+                    <div class="component-block">
+                        <h4>Process Score Components</h4>
+                        <div id="process-components" class="component-list"></div>
+                    </div>
+                    <div class="component-block">
+                        <h4>Network Score Components</h4>
+                        <div id="network-components" class="component-list"></div>
+                    </div>
 
                     <h4>Component Impact Feed</h4>
                     <div class="impact-feed" id="impact-feed">
                         <div class="no-alarms">No component impacts</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ML Anomaly Detection Panel -->
+        <section class="anomaly-section" id="anomaly-section">
+            <div class="anomaly-header">
+                <h2>🧠 LSTM Anomaly Detection</h2>
+                <div class="anomaly-header-controls">
+                    <span class="anomaly-model-badge" id="anomaly-model-badge">Model: not loaded</span>
+                    <span class="anomaly-status-badge" id="anomaly-status-badge">Idle</span>
+                </div>
+            </div>
+            <div class="anomaly-layout">
+                <!-- Anomaly Score Gauge + History -->
+                <div class="anomaly-score-panel">
+                    <h3>Anomaly Score</h3>
+                    <div class="anomaly-gauge-wrap">
+                        <canvas id="anomaly-gauge-canvas" width="200" height="120"></canvas>
+                        <div class="anomaly-score-value" id="anomaly-score-value">0.0</div>
+                        <div class="anomaly-score-label">reconstruction error</div>
+                    </div>
+                    <div class="anomaly-stats-row">
+                        <div class="anomaly-stat">
+                            <span class="anomaly-stat-label">Threshold</span>
+                            <span class="anomaly-stat-value" id="anomaly-threshold">—</span>
+                        </div>
+                        <div class="anomaly-stat">
+                            <span class="anomaly-stat-label">Inference</span>
+                            <span class="anomaly-stat-value" id="anomaly-inference-ms">— ms</span>
+                        </div>
+                        <div class="anomaly-stat">
+                            <span class="anomaly-stat-label">Buffer</span>
+                            <span class="anomaly-stat-value" id="anomaly-buffer-fill">0%</span>
+                        </div>
+                    </div>
+                    <div class="anomaly-verdict" id="anomaly-verdict">Waiting for data...</div>
+                </div>
+                <!-- Score History Chart -->
+                <div class="anomaly-chart-panel">
+                    <h3>Score History (last 60 ticks)</h3>
+                    <canvas id="anomaly-history-canvas" width="500" height="180"></canvas>
+                </div>
+                <!-- Feature Error Breakdown -->
+                <div class="anomaly-features-panel">
+                    <h3>Feature Error Breakdown</h3>
+                    <div class="anomaly-feature-bars" id="anomaly-feature-bars">
+                        <!-- Populated by JS -->
+                    </div>
+                    <h3 style="margin-top:12px">Attack Classification</h3>
+                    <div class="anomaly-attack-probs" id="anomaly-attack-probs">
+                        <div class="anomaly-no-data">No attack detected</div>
                     </div>
                 </div>
             </div>
@@ -297,16 +370,21 @@
                     <h3>Session KPIs</h3>
                     <div class="kpi-row"><span>Analyses Run</span><strong id="analysis-count">0</strong></div>
                     <div class="kpi-row"><span>Anomaly Hit Rate</span><strong id="anomaly-hit-rate">0%</strong></div>
-                    <div class="kpi-row"><span>Avg Inference Latency</span><strong id="avg-inference-latency">0 ms</strong></div>
+                    <div class="kpi-row"><span>Avg Inference Latency</span><strong id="avg-inference-latency">0
+                            ms</strong></div>
                     <div class="kpi-row"><span>Active Attacks</span><strong id="active-attack-count">0</strong></div>
                     <button id="export-report-btn" class="control-btn export-btn">Export Demo Report</button>
                 </div>
                 <div class="ml-card">
                     <h3>Model Explainability</h3>
-                    <div class="explainability-row"><span>Model Version</span><strong id="model-version">real-time-analyzer-v1</strong></div>
-                    <div class="explainability-row"><span>Process Source</span><strong id="process-source">local-analysis</strong></div>
-                    <div class="explainability-row"><span>Network Source</span><strong id="network-source">packet-monitor</strong></div>
-                    <div class="explainability-row"><span>Vision Inference</span><strong id="vision-inference-ms">0 ms</strong></div>
+                    <div class="explainability-row"><span>Model Version</span><strong
+                            id="model-version">real-time-analyzer-v1</strong></div>
+                    <div class="explainability-row"><span>Process Source</span><strong
+                            id="process-source">local-analysis</strong></div>
+                    <div class="explainability-row"><span>Network Source</span><strong
+                            id="network-source">packet-monitor</strong></div>
+                    <div class="explainability-row"><span>Vision Inference</span><strong id="vision-inference-ms">0
+                            ms</strong></div>
                 </div>
             </div>
             <div class="insights-section">
@@ -325,7 +403,7 @@
     </div>
 
     <!-- Hidden file input for layout import -->
-    <input type="file" id="layout-file-input" accept=".json" style="display:none"/>
+    <input type="file" id="layout-file-input" accept=".json" style="display:none" />
 
     <script src="plc-core.js"></script>
     <script src="component-registry.js"></script>
@@ -336,4 +414,5 @@
     <script src="attack-simulator.js"></script>
     <script src="app.js"></script>
 </body>
+
 </html>

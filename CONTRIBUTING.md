@@ -5,6 +5,8 @@
 - Python 3.11+
 - Node.js 18+ (for Playwright frontend tests)
 - Docker + Docker Compose (for backend services)
+- PyTorch 2.x (for ML model training — CPU-only is fine)
+- Jupyter (optional, for running the ML notebook)
 
 ## Local Setup
 
@@ -58,9 +60,18 @@ index.html ──loads──> plc-core.js          (PLC engine + ladder instruct
                       attack-simulator.js   (ICS/SCADA attack types)
                       telemetry-client.js   (backend API + SSE client)
                       app.js                (main controller, wires everything)
+
+backend/app/
+  main.py              ─── FastAPI (analyze, signals, anomaly endpoints)
+  ml/
+    model.py           ─── MVTec image feature model (sklearn)
+    torch_autoencoder.py ─ Conv autoencoder for vision (PyTorch)
+    lstm_autoencoder.py  ─ LSTM autoencoder for time-series anomaly detection (PyTorch)
 ```
 
-Key data flow: **Layout wiring → syncLadderFromLayout() → LadderProgram → PLCCore.executeLadderLogic()**
+Key data flows:
+- **Layout wiring → syncLadderFromLayout() → LadderProgram → PLCCore.executeLadderLogic()**
+- **Simulation tick → collectAnomalyTelemetry() → POST /anomaly/score → renderAnomalyPanel()**
 
 ## Code Style
 
@@ -120,6 +131,45 @@ Key data flow: **Layout wiring → syncLadderFromLayout() → LadderProgram → 
 2. Add integration tests in `backend/tests/test_api_integration.py`
 3. Document in the Analyzer API section of `README.md`
 4. If it exposes metrics, wire counters in the `/metrics` endpoint
+
+## Working with the ML Pipeline
+
+### Retraining the LSTM Anomaly Detector
+
+```bash
+cd backend
+python3 scripts/train_lstm_anomaly.py \
+  --output models/lstm_anomaly_detector.pt \
+  --epochs 50 --samples 8000
+```
+
+The trained artifact is saved to `backend/models/lstm_anomaly_detector.pt` and auto-loaded by the backend on startup via the `LSTM_MODEL_PATH` environment variable.
+
+### Adding a New Attack Type to the Synthetic Data Generator
+
+1. Open `backend/app/ml/lstm_autoencoder.py`
+2. Add a new `elif attack_type == "your_attack":` block in `generate_attack_data()`
+3. Modify the baseline `normal_data` array to simulate your attack's telemetry signature
+4. Add the attack name to `ATTACK_TYPES` in `backend/scripts/train_lstm_anomaly.py`
+5. Retrain the model and verify detection rate
+
+### Adding a New Feature to the Telemetry Vector
+
+1. Add the feature name to `FEATURE_NAMES` in `backend/app/ml/lstm_autoencoder.py`
+2. Update `telemetry_to_vector()` to extract the new value
+3. Update `generate_normal_data()` and `generate_attack_data()` to include synthetic values
+4. Update `AnomalyTelemetryPayload` in `backend/app/main.py`
+5. Update `collectAnomalyTelemetry()` in `app.js` to collect the new feature from the frontend
+6. Retrain the model (old model artifacts will be incompatible)
+
+### Running the Jupyter Notebook
+
+```bash
+cd notebooks
+jupyter notebook lstm_anomaly_detection.ipynb
+```
+
+The notebook demonstrates the full pipeline with visualizations. Update it when changing the model architecture or evaluation methodology.
 
 ## Commit Messages
 
