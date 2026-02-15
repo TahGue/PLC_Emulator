@@ -213,26 +213,111 @@ class ComponentRegistry {
             category: 'actuators',
             label: 'Electric Motor',
             icon: '⚙️',
-            w: 68, h: 56,
+            w: 68, h: 72,
             ports: [
-                { id: 'run', type: 'input', side: 'left', offset: 0.35, label: 'RUN', dataType: 'digital' },
-                { id: 'speed', type: 'input', side: 'left', offset: 0.65, label: 'SPD', dataType: 'analog' },
-                { id: 'running', type: 'output', side: 'right', offset: 0.5, label: 'FB', dataType: 'digital' }
+                { id: 'run', type: 'input', side: 'left', offset: 0.25, label: 'RUN', dataType: 'digital' },
+                { id: 'speed', type: 'input', side: 'left', offset: 0.50, label: 'SPD', dataType: 'analog' },
+                { id: 'reset', type: 'input', side: 'left', offset: 0.75, label: 'RST', dataType: 'digital' },
+                { id: 'running', type: 'output', side: 'right', offset: 0.20, label: 'FB', dataType: 'digital' },
+                { id: 'speed_fb', type: 'output', side: 'right', offset: 0.45, label: 'SPD', dataType: 'analog' },
+                { id: 'current', type: 'output', side: 'right', offset: 0.65, label: 'AMP', dataType: 'analog' },
+                { id: 'fault', type: 'output', side: 'right', offset: 0.85, label: 'FLT', dataType: 'digital' }
             ],
-            defaultProps: { address: '', label: 'M', ratedRPM: 1800 },
+            defaultProps: { address: '', label: 'M', ratedRPM: 1800, startDelay: 200, accelTime: 1500, ratedCurrent: 5.0, overloadThreshold: 1.5, overloadDelay: 3000 },
             color: '#22c55e',
             renderSVG(w, h, s) {
-                const on = s.inputs && s.inputs.run;
-                const c = on ? '#22c55e' : '#64748b';
+                const spd = s.speedPct || 0;
+                const fault = s.fault || false;
+                const on = spd > 0;
+                const c = fault ? '#ef4444' : on ? '#22c55e' : '#64748b';
+                const curPct = Math.min(1, (s.currentDraw || 0) / ((s.props?.ratedCurrent || 5) * (s.props?.overloadThreshold || 1.5)));
+                const curColor = curPct > 0.85 ? '#ef4444' : curPct > 0.6 ? '#f59e0b' : '#22c55e';
                 return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="${c}" stroke-width="2"/>
-                    <text x="${w/2}" y="13" text-anchor="middle" fill="${c}" font-size="8" font-weight="bold">MOTOR</text>
-                    <circle cx="${w/2}" cy="${h/2+5}" r="14" fill="#0f172a" stroke="${c}" stroke-width="2"/>
-                    <text x="${w/2}" y="${h/2+9}" text-anchor="middle" fill="${c}" font-size="12" font-weight="bold">M</text>
-                    ${on ? `<circle cx="${w/2}" cy="${h/2+5}" r="14" fill="none" stroke="${c}" stroke-width="1" stroke-dasharray="4 4"><animateTransform attributeName="transform" type="rotate" from="0 ${w/2} ${h/2+5}" to="360 ${w/2} ${h/2+5}" dur="1s" repeatCount="indefinite"/></circle>` : ''}`;
+                    <text x="${w/2}" y="11" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">${fault?'FAULT':'MOTOR'}</text>
+                    <circle cx="${w/2}" cy="${h/2}" r="13" fill="#0f172a" stroke="${c}" stroke-width="2"/>
+                    <text x="${w/2}" y="${h/2+4}" text-anchor="middle" fill="${c}" font-size="11" font-weight="bold">M</text>
+                    ${on && !fault ? `<circle cx="${w/2}" cy="${h/2}" r="13" fill="none" stroke="${c}" stroke-width="1" stroke-dasharray="4 4"><animateTransform attributeName="transform" type="rotate" from="0 ${w/2} ${h/2}" to="360 ${w/2} ${h/2}" dur="${Math.max(0.2, 2 - spd/55)}s" repeatCount="indefinite"/></circle>` : ''}
+                    <rect x="6" y="${h-14}" width="${w-12}" height="4" rx="2" fill="#0f172a" stroke="#334155" stroke-width="0.5"/>
+                    <rect x="6" y="${h-14}" width="${(w-12)*spd/100}" height="4" rx="2" fill="${c}"/>
+                    <text x="${w/2}" y="${h-3}" text-anchor="middle" fill="#94a3b8" font-size="6">${Math.round(spd)}% ${(s.currentDraw||0).toFixed(1)}A</text>
+                    ${fault ? `<circle cx="${w-10}" cy="10" r="4" fill="#ef4444"><animate attributeName="opacity" values="1;0.3;1" dur="0.6s" repeatCount="indefinite"/></circle>` : ''}`;
             },
             simulate(ins, props, dt, st) {
-                const on = ins.run || false;
-                return { outputs: { running: on }, state: { ...st, running: on } };
+                const dtClamped = Math.min(dt, 500);
+                const dtSec = dtClamped / 1000;
+                const cmdRun = ins.run || false;
+                const cmdReset = ins.reset || false;
+                let fault = st.fault || false;
+                let overloadAccum = st.overloadAccum || 0;
+                let startTimer = st.startTimer || 0;
+                let speedPct = st.speedPct || 0;
+                let phase = st.phase || 'stopped'; // stopped, starting, accelerating, running, faulted
+
+                const startDelay = props.startDelay || 200;
+                const accelTime = props.accelTime || 1500;
+                const ratedCurrent = props.ratedCurrent || 5.0;
+                const overloadThreshold = props.overloadThreshold || 1.5;
+                const overloadDelay = props.overloadDelay || 3000;
+                const targetSpeed = typeof ins.speed === 'number' ? Math.min(100, Math.max(0, ins.speed)) : 100;
+
+                // Reset from fault
+                if (cmdReset && fault) {
+                    fault = false; overloadAccum = 0; phase = 'stopped'; speedPct = 0;
+                }
+
+                if (fault) {
+                    phase = 'faulted'; speedPct = Math.max(0, speedPct - (100 / (accelTime / dtClamped || 1)));
+                } else if (cmdRun) {
+                    if (phase === 'stopped' || phase === 'faulted') {
+                        phase = 'starting'; startTimer = 0;
+                    }
+                    if (phase === 'starting') {
+                        startTimer += dtClamped;
+                        if (startTimer >= startDelay) { phase = 'accelerating'; }
+                    }
+                    if (phase === 'accelerating' || phase === 'running') {
+                        const rampRate = 100 / (accelTime || 1) * dtClamped;
+                        if (speedPct < targetSpeed) {
+                            speedPct = Math.min(targetSpeed, speedPct + rampRate);
+                        } else if (speedPct > targetSpeed) {
+                            speedPct = Math.max(targetSpeed, speedPct - rampRate);
+                        }
+                        if (Math.abs(speedPct - targetSpeed) < 0.5) { phase = 'running'; }
+                    }
+                } else {
+                    // Decelerate to stop
+                    if (speedPct > 0) {
+                        const rampRate = 100 / (accelTime || 1) * dtClamped;
+                        speedPct = Math.max(0, speedPct - rampRate * 1.5);
+                    }
+                    if (speedPct <= 0) { speedPct = 0; phase = 'stopped'; startTimer = 0; }
+                }
+
+                // Current draw model
+                let currentDraw = 0;
+                if (phase === 'starting') {
+                    currentDraw = ratedCurrent * 6.0; // inrush
+                } else if (phase === 'accelerating') {
+                    currentDraw = ratedCurrent * (2.0 + (speedPct / 100) * 1.0); // high during accel
+                } else if (phase === 'running') {
+                    currentDraw = ratedCurrent * (0.3 + (speedPct / 100) * 0.7); // normal running
+                }
+
+                // Overload detection
+                if (currentDraw > ratedCurrent * overloadThreshold) {
+                    overloadAccum += dtClamped;
+                    if (overloadAccum >= overloadDelay) {
+                        fault = true; phase = 'faulted';
+                    }
+                } else {
+                    overloadAccum = Math.max(0, overloadAccum - dtClamped * 0.5);
+                }
+
+                const running = speedPct > 1 && !fault;
+                return {
+                    outputs: { running, speed_fb: speedPct, current: currentDraw, fault },
+                    state: { ...st, running, speedPct, currentDraw, fault, overloadAccum, startTimer, phase }
+                };
             }
         });
 
@@ -244,22 +329,57 @@ class ComponentRegistry {
             w: 64, h: 52,
             ports: [
                 { id: 'cmd', type: 'input', side: 'left', offset: 0.5, label: 'CMD', dataType: 'digital' },
-                { id: 'state', type: 'output', side: 'right', offset: 0.5, label: 'ST', dataType: 'digital' }
+                { id: 'state', type: 'output', side: 'right', offset: 0.35, label: 'ST', dataType: 'digital' },
+                { id: 'position', type: 'output', side: 'right', offset: 0.65, label: 'POS', dataType: 'analog' }
             ],
-            defaultProps: { address: '', label: 'SV', type: '2-way' },
+            defaultProps: { address: '', label: 'SV', type: '2-way', switchDelay: 80 },
             color: '#a855f7',
             renderSVG(w, h, s) {
-                const on = s.inputs && s.inputs.cmd;
-                const c = on ? '#22c55e' : '#a855f7';
+                const pos = s.valvePos || 0; // 0=closed, 100=open
+                const transitioning = s.valvePhase === 'opening' || s.valvePhase === 'closing';
+                const isOpen = pos > 50;
+                const c = transitioning ? '#f59e0b' : isOpen ? '#22c55e' : '#a855f7';
+                const pct = pos / 100;
+                const label = pos >= 95 ? 'OPEN' : pos <= 5 ? 'SHUT' : Math.round(pos) + '%';
                 return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="${c}" stroke-width="2"/>
                     <text x="${w/2}" y="13" text-anchor="middle" fill="${c}" font-size="8" font-weight="bold">VALVE</text>
                     <rect x="14" y="20" width="36" height="20" rx="3" fill="#0f172a" stroke="${c}" stroke-width="1.5"/>
-                    <line x1="${on?14:50}" y1="24" x2="${on?50:14}" y2="36" stroke="${c}" stroke-width="2"/>
-                    <text x="${w/2}" y="47" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">${on?'OPEN':'SHUT'}</text>`;
+                    <line x1="${14+36*(1-pct)}" y1="24" x2="${14+36*pct}" y2="36" stroke="${c}" stroke-width="2"/>
+                    <text x="${w/2}" y="47" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">${label}</text>`;
             },
             simulate(ins, props, dt, st) {
-                const on = ins.cmd || false;
-                return { outputs: { state: on }, state: { ...st, open: on } };
+                const dtClamped = Math.min(dt, 500);
+                const cmd = ins.cmd || false;
+                const switchDelay = props.switchDelay || 80;
+                let valvePos = st.valvePos !== undefined ? st.valvePos : 0; // 0-100
+                let valvePhase = st.valvePhase || 'closed'; // closed, opening, open, closing
+                let switchTimer = st.switchTimer || 0;
+
+                const rampRate = 100 / (switchDelay || 1) * dtClamped;
+
+                if (cmd) {
+                    if (valvePhase === 'closed' || valvePhase === 'closing') {
+                        valvePhase = 'opening';
+                    }
+                    if (valvePhase === 'opening') {
+                        valvePos = Math.min(100, valvePos + rampRate);
+                        if (valvePos >= 100) { valvePos = 100; valvePhase = 'open'; }
+                    }
+                } else {
+                    if (valvePhase === 'open' || valvePhase === 'opening') {
+                        valvePhase = 'closing';
+                    }
+                    if (valvePhase === 'closing') {
+                        valvePos = Math.max(0, valvePos - rampRate);
+                        if (valvePos <= 0) { valvePos = 0; valvePhase = 'closed'; }
+                    }
+                }
+
+                const isOpen = valvePos > 50;
+                return {
+                    outputs: { state: isOpen, position: valvePos },
+                    state: { ...st, open: isOpen, valvePos, valvePhase, switchTimer }
+                };
             }
         });
 
@@ -268,28 +388,85 @@ class ComponentRegistry {
             category: 'actuators',
             label: 'Pneumatic Cylinder',
             icon: '🔩',
-            w: 80, h: 48,
+            w: 80, h: 52,
             ports: [
-                { id: 'extend', type: 'input', side: 'left', offset: 0.35, label: 'EXT', dataType: 'digital' },
-                { id: 'retract', type: 'input', side: 'left', offset: 0.65, label: 'RET', dataType: 'digital' },
-                { id: 'ext_fb', type: 'output', side: 'right', offset: 0.35, label: 'EXT', dataType: 'digital' },
-                { id: 'ret_fb', type: 'output', side: 'right', offset: 0.65, label: 'RET', dataType: 'digital' }
+                { id: 'extend', type: 'input', side: 'left', offset: 0.25, label: 'EXT', dataType: 'digital' },
+                { id: 'retract', type: 'input', side: 'left', offset: 0.55, label: 'RET', dataType: 'digital' },
+                { id: 'air', type: 'input', side: 'left', offset: 0.85, label: 'AIR', dataType: 'analog' },
+                { id: 'ext_fb', type: 'output', side: 'right', offset: 0.25, label: 'EXT', dataType: 'digital' },
+                { id: 'ret_fb', type: 'output', side: 'right', offset: 0.55, label: 'RET', dataType: 'digital' },
+                { id: 'position', type: 'output', side: 'right', offset: 0.85, label: 'POS', dataType: 'analog' }
             ],
-            defaultProps: { address: '', label: 'CYL', stroke: 100 },
+            defaultProps: { address: '', label: 'CYL', stroke: 100, travelTime: 800, valveDelay: 50, cushionPct: 10 },
             color: '#78716c',
             renderSVG(w, h, s) {
-                const ext = s.inputs && s.inputs.extend;
-                const pos = ext ? 20 : 0;
-                return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="#78716c" stroke-width="2"/>
-                    <text x="${w/2}" y="12" text-anchor="middle" fill="#a8a29e" font-size="7" font-weight="bold">CYLINDER</text>
-                    <rect x="10" y="18" width="40" height="18" rx="3" fill="#292524" stroke="#57534e" stroke-width="1.5"/>
-                    <rect x="${28+pos}" y="20" width="26" height="14" rx="2" fill="#78716c" stroke="#a8a29e" stroke-width="1"/>
-                    <line x1="${42+pos}" y1="22" x2="${42+pos}" y2="32" stroke="#d6d3d1" stroke-width="1.5"/>`;
+                const pos = s.cylPos || 0; // 0-100%
+                const phase = s.cylPhase || 'retracted';
+                const moving = phase === 'extending' || phase === 'retracting';
+                const pixOff = (pos / 100) * 20;
+                const c = moving ? '#f59e0b' : pos > 95 ? '#22c55e' : '#78716c';
+                return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="${c}" stroke-width="2"/>
+                    <text x="${w/2}" y="11" text-anchor="middle" fill="#a8a29e" font-size="7" font-weight="bold">CYLINDER</text>
+                    <rect x="8" y="17" width="42" height="18" rx="3" fill="#292524" stroke="#57534e" stroke-width="1.5"/>
+                    <rect x="${26+pixOff}" y="19" width="26" height="14" rx="2" fill="${c}" stroke="#a8a29e" stroke-width="1"/>
+                    <line x1="${40+pixOff}" y1="21" x2="${40+pixOff}" y2="31" stroke="#d6d3d1" stroke-width="1.5"/>
+                    <rect x="8" y="39" width="${w-16}" height="3" rx="1.5" fill="#0f172a" stroke="#334155" stroke-width="0.5"/>
+                    <rect x="8" y="39" width="${(w-16)*pos/100}" height="3" rx="1.5" fill="${c}"/>
+                    <text x="${w/2}" y="49" text-anchor="middle" fill="#94a3b8" font-size="6">${Math.round(pos)}%</text>`;
             },
             simulate(ins, props, dt, st) {
-                const extended = ins.extend && !ins.retract;
-                const retracted = ins.retract && !ins.extend;
-                return { outputs: { ext_fb: extended, ret_fb: retracted || (!extended) }, state: { ...st, extended } };
+                const dtClamped = Math.min(dt, 500);
+                const cmdExtend = ins.extend || false;
+                const cmdRetract = ins.retract || false;
+                const airPressure = typeof ins.air === 'number' ? ins.air : 100; // 0-100%, default full
+                const travelTime = props.travelTime || 800;
+                const valveDelay = props.valveDelay || 50;
+                const cushionPct = props.cushionPct || 10;
+
+                let cylPos = st.cylPos !== undefined ? st.cylPos : 0; // 0=retracted, 100=extended
+                let cylPhase = st.cylPhase || 'retracted'; // retracted, valve_delay_ext, extending, extended, valve_delay_ret, retracting
+                let delayTimer = st.delayTimer || 0;
+
+                const pressureFactor = Math.max(0.2, airPressure / 100);
+                const baseRate = 100 / (travelTime || 1) * dtClamped * pressureFactor;
+
+                if (cmdExtend && !cmdRetract) {
+                    if (cylPhase === 'retracted' || cylPhase === 'retracting' || cylPhase === 'valve_delay_ret') {
+                        cylPhase = 'valve_delay_ext'; delayTimer = 0;
+                    }
+                    if (cylPhase === 'valve_delay_ext') {
+                        delayTimer += dtClamped;
+                        if (delayTimer >= valveDelay) { cylPhase = 'extending'; }
+                    }
+                    if (cylPhase === 'extending') {
+                        // Cushioning near end
+                        const cushionStart = 100 - cushionPct;
+                        const rate = cylPos > cushionStart ? baseRate * 0.4 : baseRate;
+                        cylPos = Math.min(100, cylPos + rate);
+                        if (cylPos >= 100) { cylPos = 100; cylPhase = 'extended'; }
+                    }
+                } else if (cmdRetract && !cmdExtend) {
+                    if (cylPhase === 'extended' || cylPhase === 'extending' || cylPhase === 'valve_delay_ext') {
+                        cylPhase = 'valve_delay_ret'; delayTimer = 0;
+                    }
+                    if (cylPhase === 'valve_delay_ret') {
+                        delayTimer += dtClamped;
+                        if (delayTimer >= valveDelay) { cylPhase = 'retracting'; }
+                    }
+                    if (cylPhase === 'retracting') {
+                        const rate = cylPos < cushionPct ? baseRate * 0.4 : baseRate;
+                        cylPos = Math.max(0, cylPos - rate);
+                        if (cylPos <= 0) { cylPos = 0; cylPhase = 'retracted'; }
+                    }
+                }
+                // If neither commanded, hold position (spring-return could be added via prop)
+
+                const extFb = cylPos >= 98;
+                const retFb = cylPos <= 2;
+                return {
+                    outputs: { ext_fb: extFb, ret_fb: retFb, position: cylPos },
+                    state: { ...st, extended: extFb, cylPos, cylPhase, delayTimer }
+                };
             }
         });
 
@@ -298,25 +475,91 @@ class ComponentRegistry {
             category: 'actuators',
             label: 'Pump',
             icon: '🔄',
-            w: 64, h: 56,
+            w: 64, h: 68,
             ports: [
-                { id: 'run', type: 'input', side: 'left', offset: 0.5, label: 'RUN', dataType: 'digital' },
-                { id: 'running', type: 'output', side: 'right', offset: 0.5, label: 'FB', dataType: 'digital' }
+                { id: 'run', type: 'input', side: 'left', offset: 0.30, label: 'RUN', dataType: 'digital' },
+                { id: 'reset', type: 'input', side: 'left', offset: 0.70, label: 'RST', dataType: 'digital' },
+                { id: 'running', type: 'output', side: 'right', offset: 0.20, label: 'FB', dataType: 'digital' },
+                { id: 'flow', type: 'output', side: 'right', offset: 0.50, label: 'FLOW', dataType: 'analog' },
+                { id: 'fault', type: 'output', side: 'right', offset: 0.80, label: 'FLT', dataType: 'digital' }
             ],
-            defaultProps: { address: '', label: 'P', flowRate: 50 },
+            defaultProps: { address: '', label: 'P', flowRate: 50, startDelay: 150, accelTime: 1000, ratedCurrent: 3.0, overloadThreshold: 1.5, overloadDelay: 3000 },
             color: '#0ea5e9',
             renderSVG(w, h, s) {
-                const on = s.inputs && s.inputs.run;
-                const c = on ? '#22c55e' : '#0ea5e9';
+                const spd = s.speedPct || 0;
+                const fault = s.fault || false;
+                const on = spd > 0;
+                const c = fault ? '#ef4444' : on ? '#22c55e' : '#0ea5e9';
+                const flowPct = s.flowOutput ? Math.round(s.flowOutput / (s.props?.flowRate || 50) * 100) : 0;
                 return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="${c}" stroke-width="2"/>
-                    <text x="${w/2}" y="13" text-anchor="middle" fill="${c}" font-size="8" font-weight="bold">PUMP</text>
-                    <circle cx="${w/2}" cy="${h/2+5}" r="12" fill="#0f172a" stroke="${c}" stroke-width="2"/>
-                    <path d="M${w/2-6},${h/2+5} L${w/2+6},${h/2+5} M${w/2},${h/2-1} L${w/2},${h/2+11}" stroke="${c}" stroke-width="2" stroke-linecap="round"/>
-                    ${on?`<circle cx="${w/2}" cy="${h/2+5}" r="12" fill="none" stroke="${c}" stroke-width="1" opacity="0.5" stroke-dasharray="3 3"><animateTransform attributeName="transform" type="rotate" from="0 ${w/2} ${h/2+5}" to="360 ${w/2} ${h/2+5}" dur="0.8s" repeatCount="indefinite"/></circle>`:''}`;
+                    <text x="${w/2}" y="11" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">${fault?'FAULT':'PUMP'}</text>
+                    <circle cx="${w/2}" cy="${h/2-1}" r="11" fill="#0f172a" stroke="${c}" stroke-width="2"/>
+                    <path d="M${w/2-5},${h/2-1} L${w/2+5},${h/2-1} M${w/2},${h/2-6} L${w/2},${h/2+4}" stroke="${c}" stroke-width="2" stroke-linecap="round"/>
+                    ${on && !fault?`<circle cx="${w/2}" cy="${h/2-1}" r="11" fill="none" stroke="${c}" stroke-width="1" opacity="0.5" stroke-dasharray="3 3"><animateTransform attributeName="transform" type="rotate" from="0 ${w/2} ${h/2-1}" to="360 ${w/2} ${h/2-1}" dur="${Math.max(0.3, 1.5 - spd/80)}s" repeatCount="indefinite"/></circle>`:''}
+                    <rect x="6" y="${h-14}" width="${w-12}" height="4" rx="2" fill="#0f172a" stroke="#334155" stroke-width="0.5"/>
+                    <rect x="6" y="${h-14}" width="${(w-12)*spd/100}" height="4" rx="2" fill="${c}"/>
+                    <text x="${w/2}" y="${h-3}" text-anchor="middle" fill="#94a3b8" font-size="6">${(s.flowOutput||0).toFixed(1)} L/m</text>
+                    ${fault ? `<circle cx="${w-10}" cy="10" r="4" fill="#ef4444"><animate attributeName="opacity" values="1;0.3;1" dur="0.6s" repeatCount="indefinite"/></circle>` : ''}`;
             },
             simulate(ins, props, dt, st) {
-                const on = ins.run || false;
-                return { outputs: { running: on }, state: { ...st, running: on } };
+                const dtClamped = Math.min(dt, 500);
+                const cmdRun = ins.run || false;
+                const cmdReset = ins.reset || false;
+                let fault = st.fault || false;
+                let overloadAccum = st.overloadAccum || 0;
+                let startTimer = st.startTimer || 0;
+                let speedPct = st.speedPct || 0;
+                let phase = st.phase || 'stopped';
+
+                const startDelay = props.startDelay || 150;
+                const accelTime = props.accelTime || 1000;
+                const ratedCurrent = props.ratedCurrent || 3.0;
+                const overloadThreshold = props.overloadThreshold || 1.5;
+                const overloadDelay = props.overloadDelay || 3000;
+                const maxFlow = props.flowRate || 50;
+
+                if (cmdReset && fault) {
+                    fault = false; overloadAccum = 0; phase = 'stopped'; speedPct = 0;
+                }
+
+                if (fault) {
+                    phase = 'faulted'; speedPct = Math.max(0, speedPct - (100 / (accelTime / dtClamped || 1)));
+                } else if (cmdRun) {
+                    if (phase === 'stopped' || phase === 'faulted') { phase = 'starting'; startTimer = 0; }
+                    if (phase === 'starting') {
+                        startTimer += dtClamped;
+                        if (startTimer >= startDelay) { phase = 'accelerating'; }
+                    }
+                    if (phase === 'accelerating' || phase === 'running') {
+                        const rampRate = 100 / (accelTime || 1) * dtClamped;
+                        speedPct = Math.min(100, speedPct + rampRate);
+                        if (speedPct >= 99.5) { speedPct = 100; phase = 'running'; }
+                    }
+                } else {
+                    if (speedPct > 0) {
+                        speedPct = Math.max(0, speedPct - (100 / (accelTime || 1) * dtClamped * 1.5));
+                    }
+                    if (speedPct <= 0) { speedPct = 0; phase = 'stopped'; startTimer = 0; }
+                }
+
+                let currentDraw = 0;
+                if (phase === 'starting') { currentDraw = ratedCurrent * 5.0; }
+                else if (phase === 'accelerating') { currentDraw = ratedCurrent * (1.5 + (speedPct / 100) * 0.8); }
+                else if (phase === 'running') { currentDraw = ratedCurrent * (0.3 + (speedPct / 100) * 0.7); }
+
+                if (currentDraw > ratedCurrent * overloadThreshold) {
+                    overloadAccum += dtClamped;
+                    if (overloadAccum >= overloadDelay) { fault = true; phase = 'faulted'; }
+                } else {
+                    overloadAccum = Math.max(0, overloadAccum - dtClamped * 0.5);
+                }
+
+                const flowOutput = (speedPct / 100) * maxFlow;
+                const running = speedPct > 1 && !fault;
+                return {
+                    outputs: { running, flow: flowOutput, fault },
+                    state: { ...st, running, speedPct, currentDraw, flowOutput, fault, overloadAccum, startTimer, phase }
+                };
             }
         });
 
@@ -325,24 +568,70 @@ class ComponentRegistry {
             category: 'actuators',
             label: 'Heater',
             icon: '🔥',
-            w: 64, h: 52,
+            w: 64, h: 64,
             ports: [
-                { id: 'cmd', type: 'input', side: 'left', offset: 0.5, label: 'ON', dataType: 'digital' },
-                { id: 'active', type: 'output', side: 'right', offset: 0.5, label: 'FB', dataType: 'digital' }
+                { id: 'cmd', type: 'input', side: 'left', offset: 0.30, label: 'ON', dataType: 'digital' },
+                { id: 'reset', type: 'input', side: 'left', offset: 0.70, label: 'RST', dataType: 'digital' },
+                { id: 'active', type: 'output', side: 'right', offset: 0.20, label: 'FB', dataType: 'digital' },
+                { id: 'temp', type: 'output', side: 'right', offset: 0.50, label: 'TEMP', dataType: 'analog' },
+                { id: 'fault', type: 'output', side: 'right', offset: 0.80, label: 'FLT', dataType: 'digital' }
             ],
-            defaultProps: { address: '', label: 'HTR', power: 1000 },
+            defaultProps: { address: '', label: 'HTR', power: 1000, heatRate: 5, coolRate: 2, ambientTemp: 25, maxTemp: 150 },
             color: '#ef4444',
             renderSVG(w, h, s) {
-                const on = s.inputs && s.inputs.cmd;
-                const c = on ? '#ef4444' : '#64748b';
+                const temp = s.currentTemp || 25;
+                const fault = s.fault || false;
+                const on = s.heating || false;
+                const maxT = s.props?.maxTemp || 150;
+                const ambT = s.props?.ambientTemp || 25;
+                const pct = Math.min(1, Math.max(0, (temp - ambT) / (maxT - ambT)));
+                const c = fault ? '#ef4444' : on ? '#f59e0b' : '#64748b';
+                const tempColor = pct > 0.85 ? '#ef4444' : pct > 0.6 ? '#f59e0b' : '#22c55e';
                 return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="${c}" stroke-width="2"/>
-                    <text x="${w/2}" y="13" text-anchor="middle" fill="${c}" font-size="8" font-weight="bold">HEATER</text>
-                    <path d="M18,26 Q24,20 24,28 Q24,36 30,30 Q36,24 36,32 Q36,40 42,34 Q48,28 48,36" fill="none" stroke="${on?'#ef4444':'#475569'}" stroke-width="2" stroke-linecap="round"/>
-                    ${on?'<rect x="14" y="40" width="36" height="4" rx="2" fill="#ef4444" opacity="0.6"><animate attributeName="opacity" values="0.3;0.8;0.3" dur="1s" repeatCount="indefinite"/></rect>':''}`;
+                    <text x="${w/2}" y="11" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">${fault?'OVERTEMP':'HEATER'}</text>
+                    <path d="M16,24 Q22,18 22,26 Q22,34 28,28 Q34,22 34,30 Q34,38 40,32 Q46,26 46,34" fill="none" stroke="${on?'#ef4444':'#475569'}" stroke-width="2" stroke-linecap="round"/>
+                    ${on && !fault?'<rect x="12" y="38" width="40" height="3" rx="1.5" fill="#ef4444" opacity="0.6"><animate attributeName="opacity" values="0.3;0.8;0.3" dur="1s" repeatCount="indefinite"/></rect>':''}
+                    <rect x="8" y="44" width="${w-16}" height="4" rx="2" fill="#0f172a" stroke="#334155" stroke-width="0.5"/>
+                    <rect x="8" y="44" width="${(w-16)*pct}" height="4" rx="2" fill="${tempColor}"/>
+                    <text x="${w/2}" y="57" text-anchor="middle" fill="${tempColor}" font-size="7" font-weight="bold">${Math.round(temp)}°C</text>
+                    ${fault ? `<circle cx="${w-10}" cy="10" r="4" fill="#ef4444"><animate attributeName="opacity" values="1;0.3;1" dur="0.6s" repeatCount="indefinite"/></circle>` : ''}`;
             },
             simulate(ins, props, dt, st) {
-                const on = ins.cmd || false;
-                return { outputs: { active: on }, state: { ...st, active: on } };
+                const dtClamped = Math.min(dt, 500);
+                const dtSec = dtClamped / 1000;
+                const cmdOn = ins.cmd || false;
+                const cmdReset = ins.reset || false;
+                let fault = st.fault || false;
+                let currentTemp = st.currentTemp !== undefined ? st.currentTemp : (props.ambientTemp || 25);
+
+                const heatRate = props.heatRate || 5;   // °C per second
+                const coolRate = props.coolRate || 2;    // °C per second
+                const ambientTemp = props.ambientTemp || 25;
+                const maxTemp = props.maxTemp || 150;
+
+                if (cmdReset && fault) { fault = false; }
+
+                const heating = cmdOn && !fault;
+                if (heating) {
+                    currentTemp += heatRate * dtSec;
+                } else {
+                    // Cool toward ambient
+                    const diff = currentTemp - ambientTemp;
+                    if (diff > 0.1) {
+                        currentTemp -= coolRate * dtSec * (diff / (maxTemp - ambientTemp + 1));
+                        currentTemp = Math.max(ambientTemp, currentTemp);
+                    }
+                }
+
+                // Overtemp fault
+                if (currentTemp >= maxTemp && !fault) {
+                    fault = true;
+                }
+
+                return {
+                    outputs: { active: heating, temp: currentTemp, fault },
+                    state: { ...st, active: heating, heating, currentTemp, fault }
+                };
             }
         });
 
@@ -352,38 +641,77 @@ class ComponentRegistry {
             category: 'process',
             label: 'Conveyor Belt',
             icon: '➡️',
-            w: 120, h: 44,
+            w: 120, h: 52,
             ports: [
-                { id: 'motor', type: 'input', side: 'left', offset: 0.3, label: 'MTR', dataType: 'digital' },
-                { id: 'item_in', type: 'input', side: 'left', offset: 0.7, label: 'IN', dataType: 'digital' },
-                { id: 'item_out', type: 'output', side: 'right', offset: 0.5, label: 'OUT', dataType: 'digital' }
+                { id: 'motor', type: 'input', side: 'left', offset: 0.25, label: 'MTR', dataType: 'digital' },
+                { id: 'item_in', type: 'input', side: 'left', offset: 0.65, label: 'IN', dataType: 'digital' },
+                { id: 'item_out', type: 'output', side: 'right', offset: 0.35, label: 'OUT', dataType: 'digital' },
+                { id: 'speed_pct', type: 'output', side: 'right', offset: 0.75, label: 'SPD', dataType: 'analog' }
             ],
-            defaultProps: { address: '', label: 'CONV', speed: 1.0, length: 3 },
+            defaultProps: { address: '', label: 'CONV', speed: 1.0, length: 3, accelTime: 500, slip: 0, maxItems: 5 },
             color: '#64748b',
             renderSVG(w, h, s) {
-                const on = s.inputs && s.inputs.motor;
+                const spd = s.beltSpeed || 0;
+                const on = spd > 1;
                 const c = on ? '#22c55e' : '#64748b';
+                const items = s.items || [];
+                const beltW = w - 16;
                 return `<rect width="${w}" height="${h}" rx="6" fill="#1e293b" stroke="${c}" stroke-width="2"/>
-                    <rect x="8" y="16" width="${w-16}" height="12" rx="3" fill="#334155" stroke="#475569" stroke-width="1"/>
-                    ${on?`<rect x="8" y="16" width="${w-16}" height="12" rx="3" fill="url(#conveyorStripe)" opacity="0.3"><animateTransform attributeName="transform" type="translate" from="0 0" to="12 0" dur="0.5s" repeatCount="indefinite"/></rect>`:''}
-                    <circle cx="14" cy="34" r="4" fill="${c}"/>
-                    <circle cx="${w-14}" cy="34" r="4" fill="${c}"/>
-                    <text x="${w/2}" y="12" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">CONVEYOR</text>`;
+                    <text x="${w/2}" y="11" text-anchor="middle" fill="${c}" font-size="7" font-weight="bold">CONVEYOR</text>
+                    <rect x="8" y="16" width="${beltW}" height="12" rx="3" fill="#334155" stroke="#475569" stroke-width="1"/>
+                    ${on?`<rect x="8" y="16" width="${beltW}" height="12" rx="3" fill="url(#conveyorStripe)" opacity="0.3"><animateTransform attributeName="transform" type="translate" from="0 0" to="12 0" dur="${Math.max(0.15, 1 - spd/120)}s" repeatCount="indefinite"/></rect>`:''}
+                    ${items.map(it => `<rect x="${8 + (it.pos / 100) * (beltW - 6)}" y="17" width="6" height="10" rx="1" fill="#f59e0b" opacity="0.8"/>`).join('')}
+                    <circle cx="14" cy="32" r="3" fill="${c}"/>
+                    <circle cx="${w-14}" cy="32" r="3" fill="${c}"/>
+                    <rect x="8" y="39" width="${beltW}" height="3" rx="1.5" fill="#0f172a" stroke="#334155" stroke-width="0.5"/>
+                    <rect x="8" y="39" width="${beltW*spd/100}" height="3" rx="1.5" fill="${c}"/>
+                    <text x="${w/2}" y="49" text-anchor="middle" fill="#94a3b8" font-size="6">${Math.round(spd)}% ${items.length} item${items.length!==1?'s':''}</text>`;
             },
             simulate(ins, props, dt, st) {
-                const on = ins.motor || false;
-                let timer = st.timer || 0;
+                const dtClamped = Math.min(dt, 500);
+                const cmdMotor = ins.motor || false;
+                const accelTime = props.accelTime || 500;
+                const slip = Math.min(0.5, Math.max(0, props.slip || 0));
+                const maxItems = props.maxItems || 5;
+                const beltLength = (props.length || 3) * 1000; // ms at full speed
+
+                let beltSpeed = st.beltSpeed || 0; // 0-100%
+                let items = st.items ? st.items.map(it => ({...it})) : []; // [{pos: 0-100}]
+                let prevItemIn = st.prevItemIn || false;
                 let itemOut = false;
-                if (on && ins.item_in) {
-                    timer += dt;
-                    if (timer > (props.length || 3) * 1000) {
-                        itemOut = true;
-                        timer = 0;
-                    }
-                } else if (!on) {
-                    timer = 0;
+
+                // Speed ramp
+                const rampRate = 100 / (accelTime || 1) * dtClamped;
+                if (cmdMotor) {
+                    beltSpeed = Math.min(100, beltSpeed + rampRate);
+                } else {
+                    beltSpeed = Math.max(0, beltSpeed - rampRate * 1.5);
                 }
-                return { outputs: { item_out: itemOut }, state: { ...st, timer, running: on } };
+
+                // Apply slip
+                const effectiveSpeed = beltSpeed * (1 - slip);
+
+                // Move items along belt
+                const moveRate = (effectiveSpeed / 100) * (100 / (beltLength || 1)) * dtClamped;
+                for (const item of items) {
+                    item.pos += moveRate;
+                }
+
+                // Check for items reaching end
+                const exiting = items.filter(it => it.pos >= 100);
+                if (exiting.length > 0) { itemOut = true; }
+                items = items.filter(it => it.pos < 100);
+
+                // Add new item on rising edge of item_in
+                const itemIn = ins.item_in || false;
+                if (itemIn && !prevItemIn && items.length < maxItems) {
+                    items.push({ pos: 0 });
+                }
+
+                return {
+                    outputs: { item_out: itemOut, speed_pct: effectiveSpeed },
+                    state: { ...st, beltSpeed, items, prevItemIn: itemIn, running: beltSpeed > 1 }
+                };
             }
         });
 
