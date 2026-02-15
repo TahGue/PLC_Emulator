@@ -2068,6 +2068,7 @@ class PLCEmulatorApp {
                 ladder: [
                     [
                         { type: 'XIC', operands: ['I:0/1'] },
+                        { type: 'XIO', operands: ['I:0/0'] },
                         { type: 'OTE', operands: ['O:0/0'] }
                     ],
                     [
@@ -2075,7 +2076,15 @@ class PLCEmulatorApp {
                         { type: 'OTE', operands: ['O:0/1'] }
                     ],
                     [
-                        { type: 'XIC', operands: ['O:0/1'] },
+                        { type: 'XIO', operands: ['I:0/3'] },
+                        { type: 'OTE', operands: ['O:0/2'] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['I:0/3'] },
+                        { type: 'CTU', operands: ['C:0', 100] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['C:0/DN'] },
                         { type: 'OTE', operands: ['O:0/7'] }
                     ]
                 ]
@@ -2160,6 +2169,10 @@ class PLCEmulatorApp {
                     ],
                     [
                         { type: 'XIC', operands: ['I:0/2'] },
+                        { type: 'TON', operands: ['T:1', 1500] }
+                    ],
+                    [
+                        { type: 'XIC', operands: ['T:1/DN'] },
                         { type: 'OTE', operands: ['O:0/3'] }
                     ],
                     [
