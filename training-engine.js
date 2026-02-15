@@ -52,7 +52,7 @@ class TrainingEngine {
                             }
                         }
                     }
-                    app.ladderRenderer.render(app.plc.ladderProgram.rungs, app.plc);
+                    app.ladderRenderer.render(app.ladderProgram, app.plc.getIOState());
                 },
                 check: (app) => {
                     const results = [];
@@ -113,7 +113,7 @@ class TrainingEngine {
                             }
                         }
                     }
-                    app.ladderRenderer.render(app.plc.ladderProgram.rungs, app.plc);
+                    app.ladderRenderer.render(app.ladderProgram, app.plc.getIOState());
                 },
                 check: (app) => {
                     const results = [];
