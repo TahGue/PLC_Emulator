@@ -11,6 +11,8 @@ class PLCCore {
         // Timer and counter arrays
         this.timers = [];
         this.counters = [];
+        this.timerMap = new Map();
+        this.counterMap = new Map();
         
         // Data tables
         this.dataRegisters = new Array(100).fill(0);
@@ -102,6 +104,8 @@ class PLCCore {
         this.outputs.fill(false);
         this.timers = [];
         this.counters = [];
+        this.timerMap.clear();
+        this.counterMap.clear();
         this.notifyAllOutputsChanged();
     }
     
@@ -195,6 +199,108 @@ class PLCCore {
     updateOutputs() {
         // Simulate writing to physical outputs
         // In a real PLC, this would write to hardware
+    }
+
+    getOrCreateTimer(tag, preset = 1000) {
+        const key = String(tag || `T:${this.timers.length}`).trim();
+        const parsedPreset = Number(preset);
+        const safePreset = Number.isFinite(parsedPreset) && parsedPreset > 0 ? parsedPreset : 1000;
+
+        let timer = this.timerMap.get(key);
+        if (!timer) {
+            timer = {
+                id: key,
+                preset: safePreset,
+                accumulated: 0,
+                enabled: false,
+                done: false,
+                type: 'TON'
+            };
+            this.timerMap.set(key, timer);
+            this.timers.push(timer);
+        } else {
+            timer.preset = safePreset;
+        }
+
+        return timer;
+    }
+
+    getOrCreateCounter(tag, preset = 1) {
+        const key = String(tag || `C:${this.counters.length}`).trim();
+        const parsedPreset = Number(preset);
+        const safePreset = Number.isFinite(parsedPreset) && parsedPreset > 0 ? parsedPreset : 1;
+
+        let counter = this.counterMap.get(key);
+        if (!counter) {
+            counter = {
+                id: key,
+                preset: safePreset,
+                accumulated: 0,
+                enabled: false,
+                done: false,
+                prevEnabled: false,
+                type: 'CTU'
+            };
+            this.counterMap.set(key, counter);
+            this.counters.push(counter);
+        } else {
+            counter.preset = safePreset;
+        }
+
+        return counter;
+    }
+
+    executeTON(timerTag, preset, enabled) {
+        const timer = this.getOrCreateTimer(timerTag, preset);
+        timer.enabled = Boolean(enabled);
+
+        if (timer.enabled) {
+            timer.accumulated = Math.min(timer.accumulated + this.cycleTime, timer.preset);
+            timer.done = timer.accumulated >= timer.preset;
+        } else {
+            timer.accumulated = 0;
+            timer.done = false;
+        }
+
+        return timer.done;
+    }
+
+    executeCTU(counterTag, preset, enabled) {
+        const counter = this.getOrCreateCounter(counterTag, preset);
+        const isEnabled = Boolean(enabled);
+        const risingEdge = isEnabled && !counter.prevEnabled;
+
+        if (risingEdge) {
+            counter.accumulated += 1;
+            if (counter.accumulated >= counter.preset) {
+                counter.done = true;
+            }
+        }
+
+        counter.enabled = isEnabled;
+        counter.prevEnabled = isEnabled;
+        return counter.done;
+    }
+
+    getTimerBit(address) {
+        const [tag, rawBit] = String(address).split('/');
+        const bit = (rawBit || 'DN').toUpperCase();
+        const timer = this.timerMap.get(tag);
+        if (!timer) return false;
+
+        if (bit === 'EN') return timer.enabled;
+        if (bit === 'TT') return timer.enabled && !timer.done;
+        return timer.done;
+    }
+
+    getCounterBit(address) {
+        const [tag, rawBit] = String(address).split('/');
+        const bit = (rawBit || 'DN').toUpperCase();
+        const counter = this.counterMap.get(tag);
+        if (!counter) return false;
+
+        if (bit === 'EN') return counter.enabled;
+        return counter.done;
     }
     
     // Timer operations
@@ -298,11 +404,13 @@ class LadderInstruction {
     }
     
     readBit(plc, address) {
+        if (address.startsWith('T:')) return plc.getTimerBit(address);
+        if (address.startsWith('C:')) return plc.getCounterBit(address);
         if (address.startsWith('O:')) return plc.getOutput(address);
         return plc.getInput(address);
     }
 
-    execute(plc) {
+    execute(plc, rungCondition = true) {
         switch (this.type) {
             case 'XIC': // Examine If Closed
                 return this.readBit(plc, this.operands[0]);
@@ -323,12 +431,10 @@ class LadderInstruction {
                 return true;
                 
             case 'TON': // Timer On-Delay
-                // Timer logic would be implemented here
-                return false;
+                return plc.executeTON(this.operands[0], this.operands[1], rungCondition);
                 
             case 'CTU': // Count Up
-                // Counter logic would be implemented here
-                return false;
+                return plc.executeCTU(this.operands[0], this.operands[1], rungCondition);
                 
             default:
                 return false;
@@ -353,7 +459,12 @@ class LadderRung {
                 const condition = instruction.execute(plc);
                 instrResults.push({ type: instruction.type, addr: instruction.operands[0], passed: condition });
                 result = result && condition;
-            } else if (instruction.type.startsWith('O') || instruction.type.startsWith('T') || instruction.type.startsWith('C')) {
+            } else if (instruction.type.startsWith('T') || instruction.type.startsWith('C')) {
+                // Timer/counter instructions execute with rung condition and can gate downstream logic
+                const condition = instruction.execute(plc, result);
+                instrResults.push({ type: instruction.type, addr: instruction.operands[0], passed: condition });
+                result = result && condition;
+            } else if (instruction.type.startsWith('O')) {
                 // Output instruction - energize or de-energize based on conditions
                 if (result) {
                     instruction.execute(plc);
