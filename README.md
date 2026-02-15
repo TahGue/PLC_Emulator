@@ -2,7 +2,11 @@
 
 A complete, local, PC-based PLC factory emulator with:
 - Customizable visual layout editor with drag-and-drop components (JavaScript)
-- Real-time simulation engine with signal propagation
+- **High-fidelity physics simulation** — motor dynamics, valve mechanics, conveyor belt physics, thermal models
+- **Failure injection engine** — 12 realistic industrial failure modes (sensor drift, valve stuck, motor overheating, etc.)
+- **Station abstraction layer** — auto-detected stations with KPI tracking, OEE, and fault aggregation
+- **Scan cycle visual debugger** — canvas-based timeline and per-rung execution analysis
+- **Training scenario engine** — 8 guided challenges across 5 categories with scoring and hints
 - **Real-time attack simulation lab** with 10 ICS/SCADA attack types and live packet analysis
 - **LSTM Autoencoder anomaly detection** — deep learning pipeline trained on PLC telemetry (PyTorch)
 - AI-style anomaly scoring + network security anomaly lane (Python/FastAPI)
@@ -30,11 +34,102 @@ All libraries used are free and open source.
 - **Emergency Stop**: Safety-critical emergency stop functionality
 - **Live Energized Display**: Ladder rungs light up green in real-time during simulation
 
-### 🔄 Simulation Engine
+### 🔄 Simulation Engine & Physics
 - **Signal propagation**: Signals flow through wires between component ports
-- **Component simulation**: Each component type has its own physics model
+- **High-fidelity physics**: Each component type has a realistic physics model
 - **PLC bridge**: Sensors write to PLC inputs, PLC outputs drive actuators
 - **Real-time tick**: Continuous simulation loop with configurable tick rate
+
+#### Component Physics Models
+
+| Component | Physics Properties | Behavior |
+|-----------|-------------------|----------|
+| **Motor** | ratedRPM, startDelay, accelTime, ratedCurrent, overloadThreshold, overloadDelay | 5-phase state machine (stopped→starting→accelerating→running→faulted), inrush current (6× rated), acceleration ramp, overload trip with accumulator |
+| **Solenoid Valve** | switchDelay, type (2-way) | Position ramp 0→100% with configurable delay, flow state feedback |
+| **Pneumatic Cylinder** | stroke, travelTime, valveDelay, cushionPct | Extend/retract with valve delay, cushion deceleration zone, position feedback (0-100%) |
+| **Pump** | flowRate, startDelay, accelTime, ratedCurrent, overloadThreshold | Motor-like dynamics with flow output proportional to speed, fault detection |
+| **Heater** | power, heatRate, coolRate, ambientTemp, maxTemp | Thermal model with heating/cooling curves, over-temperature fault, PID-ready temp output |
+| **Conveyor** | speed, length, accelTime, slip, maxItems | Belt speed ramp with slip factor, item tracking with transit time model |
+| **Tank** | capacity, fillRate, drainRate | Level simulation with inlet/outlet flow, full/empty digital outputs |
+
+### ⚠️ Failure Injection Engine
+12 realistic industrial failure modes that affect component behavior during simulation:
+
+| Category | Failure Mode | Severity | Effect |
+|----------|-------------|----------|--------|
+| Sensor | **Sensor Drift** | Medium | Output value gradually drifts from true reading |
+| Sensor | **Sensor Noise** | Low | Random noise added to sensor output |
+| Sensor | **Sensor Blind/Stuck** | High | Sensor frozen at fixed value, unresponsive |
+| Valve | **Valve Stuck Open** | High | Valve cannot close, remains at 100% |
+| Valve | **Valve Stuck Closed** | High | Valve cannot open, remains at 0% |
+| Valve | **Valve Leaking** | Medium | Valve leaks when closed (partial flow) |
+| Conveyor | **Conveyor Slip** | Medium | Belt slips, reducing effective speed |
+| Motor | **Motor Overheating** | High | Current draw increases, eventual thermal trip |
+| Motor | **Bearing Wear** | Medium | Vibration and increased friction |
+| Pneumatic | **Pneumatic Leak** | Medium | Cylinder loses pressure, slow/incomplete travel |
+| Process | **Pipe Blockage** | High | Flow restriction, increased pressure drop |
+| Electrical | **Wiring Fault** | Critical | Intermittent or total signal loss |
+
+Each failure features:
+- **Toggle activation** with per-failure intensity slider
+- **Direct physics effects**: modifies component state variables in the simulation engine
+- **Category filtering** and one-click reset
+- **Composable**: multiple failures can be active simultaneously
+
+### 🏭 Station Abstraction Layer
+Automatic grouping of components into named stations with KPI tracking:
+
+- **Auto-detection**: Combines spatial clustering (200px radius), label keyword matching (fill, cap, sort, mix, heat, drain, wash, quality, reject, conveyor, tank, pump), and wiring adjacency analysis
+- **Station types**: fill, cap, sort, mix, heat, drain, wash, quality, reject, conveyor, tank, pump, control
+- **KPI tracking per station**:
+  - Cycles completed, average cycle time, efficiency
+  - Uptime percentage, fault count, current status (idle/running/faulted)
+- **OEE calculation**: Overall Equipment Effectiveness = Availability × Performance × Quality
+- **Fault aggregation**: Faults bubble up from individual components to station level
+- **UI panel**: Summary stats row + station cards with live KPIs and status indicators
+
+### 🔬 Scan Cycle Visual Debugger
+Canvas-based visualization of PLC scan cycle performance:
+
+- **Timeline chart**: Stacked bar chart of last 40 scans, color-coded by phase (blue=input read, purple=logic exec, green=output update)
+- **Per-rung detail**: Horizontal bars showing execution time per ladder rung (green=energized, red=blocked, yellow=slowest)
+- **Phase breakdown bar**: Proportional view of INPUT READ → LOGIC EXEC → OUTPUT UPDATE
+- **Click-to-inspect**: Click any scan bar to see its detailed rung breakdown
+- **Instruction chain**: Shows ●XIC ○XIO inside rung bars (filled=passed, hollow=failed)
+- **Output-changed markers**: ⚡ icon on rungs that modified outputs
+- **Live stats badges**: Scan rate (scans/s), average scan time (µs), max scan time (µs)
+- **Pause/Resume**: Freeze the buffer for inspection
+- **Clear**: Reset scan history and statistics
+
+#### PLC Instrumentation
+Each scan cycle records:
+- Per-phase timing (input read, logic execution, output update) in microseconds
+- Per-rung results: energized state, execution time, instruction results, output changes
+- I/O snapshots: input state, output before/after
+- Rolling history of last 50 scans for replay
+
+### 🎓 Training Scenario Engine
+8 guided challenges across 5 categories for learning ICS/PLC concepts:
+
+| Scenario | Category | Difficulty | Description |
+|----------|----------|------------|-------------|
+| **Broken Conveyor Logic** | Ladder | ★☆☆☆☆ | Find and fix a swapped XIC/XIO instruction |
+| **Missing Safety Interlock** | Ladder | ★★☆☆☆ | Add a conveyor interlock to the fill valve rung |
+| **The Drifting Sensor** | Failure | ★★☆☆☆ | Diagnose and deactivate a hidden sensor drift |
+| **The Blind Sensor** | Failure | ★★★☆☆ | Find a stuck sensor causing production stall |
+| **Man-in-the-Middle Attack** | Cyber | ★★★☆☆ | Identify MITM attack from packet analysis |
+| **DoS Flood Attack** | Cyber | ★★☆☆☆ | Find and stop a denial-of-service attack |
+| **Optimize Fill Station** | Timing | ★★☆☆☆ | Tune system to achieve target cycle count |
+| **Factory Under Siege** | Combined | ★★★★☆ | Fix 3 simultaneous problems (attack + 2 failures) |
+
+Each scenario features:
+- **Timed challenges** with countdown timer (2-4 minutes)
+- **Objective checklist** with live completion tracking and point values
+- **Hint system**: 3 progressive hints per scenario (-5 points each)
+- **Time bonus**: +10% score for completing under 50% of time limit
+- **Completion summary**: Score breakdown, time, hints used, pass/fail
+- **Setup/teardown**: Scenarios inject faults and clean up automatically
+- **Category filter**: Browse by Ladder, Failure, Cyber, Timing, or Combined
 
 ### 🛡️ Attack Simulation Lab
 Real-time ICS/SCADA attack simulation with 10 attack types:
@@ -123,29 +218,30 @@ The ladder program is automatically generated from the visual layout:
 ### Architecture
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │           Browser (localhost:8000)        │
-                    │                                           │
-                    │  ┌──────────┐  ┌───────────────────────┐ │
-                    │  │  Layout   │  │   Attack Simulator    │ │
-                    │  │  Editor   │  │  (10 ICS/SCADA types) │ │
-                    │  └────┬─────┘  └───────────┬───────────┘ │
-                    │       │                     │             │
-                    │  ┌────▼─────────────────────▼───────────┐ │
-                    │  │       Simulation Engine               │ │
-                    │  │  (signal propagation + component sim) │ │
-                    │  └────┬─────────────────────┬───────────┘ │
-                    │       │                     │             │
-                    │  ┌────▼─────┐  ┌────────────▼──────────┐ │
-                    │  │ PLC Core │  │  Real-Time Analysis    │ │
-                    │  │ (ladder) │  │  (process + network)   │ │
-                    │  └──────────┘  └────────────────────────┘ │
-                    └──────────────────┬────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │              Browser (localhost:8000)              │
+                    │                                                    │
+                    │  ┌──────────┐  ┌──────────────┐  ┌─────────────┐ │
+                    │  │  Layout   │  │   Attack      │  │  Training   │ │
+                    │  │  Editor   │  │   Simulator   │  │  Scenarios  │ │
+                    │  └────┬─────┘  └──────┬───────┘  └──────┬──────┘ │
+                    │       │               │                  │        │
+                    │  ┌────▼───────────────▼──────────────────▼──────┐ │
+                    │  │         Simulation Engine (Physics)           │ │
+                    │  │  signal propagation + component physics models│ │
+                    │  └────┬──────────┬──────────┬──────────┬───────┘ │
+                    │       │          │          │          │          │
+                    │  ┌────▼────┐ ┌───▼────┐ ┌──▼───────┐ ┌▼───────┐ │
+                    │  │PLC Core │ │Failure │ │ Station  │ │  Scan  │ │
+                    │  │(ladder  │ │Engine  │ │ Manager  │ │Debugger│ │
+                    │  │+timing) │ │(12modes│ │ (KPIs)   │ │(canvas)│ │
+                    │  └─────────┘ └────────┘ └──────────┘ └────────┘ │
+                    └──────────────────┬───────────────────────────────┘
                                        │ (optional)
-                    ┌──────────────────▼────────────────────────┐
-                    │       Backend (localhost:8001)             │
-                    │  FastAPI + PostgreSQL + ML models          │
-                    └───────────────────────────────────────────┘
+                    ┌──────────────────▼───────────────────────────────┐
+                    │          Backend (localhost:8001)                 │
+                    │  FastAPI + PostgreSQL + LSTM Anomaly Detection    │
+                    └──────────────────────────────────────────────────┘
 ```
 
 ### Simulation Flow
@@ -153,34 +249,42 @@ The ladder program is automatically generated from the visual layout:
 2. **Wire**: Connect component ports to create signal paths
 3. **Ladder Sync**: Ladder rungs auto-generate from wiring (sensor→actuator connections)
 4. **Simulate**: Switch to Simulate mode and click Start
-5. **Attack**: Toggle attacks in the Attack Simulation Lab
-6. **Monitor**: Watch real-time effects on components, scores, packets, and ladder state
+5. **Physics**: Components simulate with realistic dynamics (motor ramp-up, valve delays, thermal curves)
+6. **Stations**: Auto-detected stations track KPIs, cycles, and faults
+7. **Attack / Fail**: Toggle attacks or inject failures to test system resilience
+8. **Debug**: Use the Scan Cycle Debugger to inspect per-phase and per-rung timing
+9. **Train**: Launch training scenarios for guided learning challenges
 
 ### PLC Scan Cycle
-The PLC operates on a continuous scan cycle:
-1. Read sensor outputs into PLC inputs
-2. Execute auto-synced ladder program (XIC/XIO contacts → OTE coils)
-3. Built-in security lockout: `I:0/8 OR I:0/9` → `O:0/8`
-4. Write PLC outputs to actuator inputs
-5. Attack simulator modifies component states (if attacks active)
-6. Real-time analysis generates process/network scores
-7. Ladder display updates energized states (green = active)
-8. Repeat (default 100ms cycle time)
+The PLC operates on a continuous scan cycle (instrumented with µs-precision timing):
+1. **Read Inputs** — sensor outputs → PLC inputs (timed)
+2. **Execute Ladder Logic** — XIC/XIO contacts → OTE coils, per-rung timing recorded
+3. **Update Outputs** — PLC outputs → actuator inputs (timed)
+4. **Record scan** — phase timing, rung results, I/O snapshots stored in history buffer
+5. Attack simulator + failure engine modify component states (if active)
+6. Station manager updates KPIs, cycle detection, fault aggregation
+7. Scan debugger receives scan record for timeline visualization
+8. Ladder display updates energized states (green = active)
+9. Repeat (default 100ms cycle time)
 
 ## File Structure
 
 ```
 PLC_Emulator/
-├── index.html               # Main application interface
-├── styles.css               # Styling (editor, attack panel, monitoring)
-├── plc-core.js              # PLC engine, ladder instructions, LadderProgram execution
-├── component-registry.js    # 20+ component type definitions with SVG rendering
+├── index.html               # Main application interface (all panels)
+├── styles.css               # Styling (editor, panels, debugger, training)
+├── plc-core.js              # PLC engine + scan cycle instrumentation (µs timing)
+├── component-registry.js    # 20+ component types with physics simulation models
 ├── simulation-engine.js     # Signal propagation, PLC bridge, serialize/deserialize
 ├── layout-editor.js         # SVG canvas editor with drag/drop/wire/zoom/pan
 ├── ladder-logic.js          # Ladder logic canvas renderer with live energized display
 ├── attack-simulator.js      # 10 ICS/SCADA attack types + real-time packet analysis
+├── failure-engine.js        # 12 failure modes (sensor, valve, motor, conveyor, etc.)
+├── station-manager.js       # Station auto-detection, KPI tracking, OEE, fault aggregation
+├── scan-debugger.js         # Canvas-based scan timeline + per-rung execution analysis
+├── training-engine.js       # 8 training scenarios with scoring, hints, and objectives
 ├── telemetry-client.js      # Frontend client for backend API + SSE
-├── app.js                   # Main application controller + syncLadderFromLayout()
+├── app.js                   # Main application controller (integrates all modules)
 ├── factory-simulation.js    # Legacy bottle factory simulation (standalone)
 ├── docker-compose.yml       # PostgreSQL + analyzer API (Docker)
 ├── docker-compose.grafana.yml
@@ -228,12 +332,14 @@ Open `http://localhost:8000/index.html`
 
 ### 2) Use the emulator
 
-1. The **Bottle Factory** preset loads automatically
+1. The **Bottle Factory** preset loads automatically with full physics properties
 2. Click **Simulate** mode, then **Start**
-3. Scroll down to the **Attack Simulation Lab**
-4. Toggle attacks on/off and observe real-time effects
-5. Adjust intensity sliders to vary attack severity
-6. Watch the **Packet Monitor**, **Risk Gauge**, and **Component Impact Feed**
+3. Watch **motor ramp-up**, **valve switching**, and **conveyor physics** in real-time
+4. Check the **Station Overview** panel for auto-detected stations and live KPIs
+5. Open the **Scan Cycle Debugger** to inspect per-phase and per-rung timing
+6. Toggle attacks in the **Attack Simulation Lab** or inject failures in the **Failure Injection** panel
+7. Launch a **Training Scenario** for guided learning challenges with scoring
+8. Use the **LSTM Anomaly Detection** panel for deep-learning-based attack detection (requires backend)
 
 ### 3) (Optional) Start backend services
 
@@ -371,15 +477,15 @@ python backend/scripts/e2e_scenario_validator.py --api-base-url http://localhost
 
 ## Preset Templates
 
-All presets are fully wired (wire count ≥ component count) with auto-generated ladder logic.
+All presets are fully wired with auto-generated ladder logic and **realistic physics properties** for every actuator, process component, and sensor.
 
-| Preset | Components | Wires | Description |
-|--------|-----------|-------|-------------|
-| **Bottle Factory** | 25 | 25 | Conveyor line with fill, cap, quality stations, logic gates, tank monitoring |
-| **Sorting Station** | 20 | 21 | Dual-path sorting with A/B diverters, logic gates, counters, bin conveyors |
-| **Mixing Process** | 22 | 22 | Feed/mix tanks, pump, heater, mixer, drain loop, alarm logic, gauges |
-| **Conveyor Merge** | 22 | 25 | Two infeed conveyors merging into one outfeed with priority logic |
-| **CIP Sequence** | 20 | 22 | Clean-in-place system with water/chemical valves, phases, drain, tank |
+| Preset | Components | Wires | Key Physics | Description |
+|--------|-----------|-------|-------------|-------------|
+| **Bottle Factory** | 25 | 25 | Motor 1800RPM/4.5A, conveyor slip=2%, valve 60ms delay | Conveyor line with fill, cap, quality stations, logic gates, tank monitoring |
+| **Sorting Station** | 20 | 21 | Pneumatic cylinders 600ms travel, infeed 1200RPM/3.5A | Dual-path sorting with A/B diverters, counters, bin conveyors |
+| **Mixing Process** | 22 | 22 | Pump 40L/min, heater 2kW/120°C max, tank fill/drain rates | Feed/mix tanks, pump, heater, mixer, drain loop, alarm logic |
+| **Conveyor Merge** | 22 | 25 | Main 1800RPM/5.5A, branch 1200RPM/3A, belt maxItems=8 | Two infeed conveyors merging into one outfeed with priority logic |
+| **CIP Sequence** | 20 | 22 | CIP pump 60L/min/4A, valve delays 70-90ms, tank 500L | Clean-in-place with water/chemical valves, 3-phase sequence |
 
 ## Browser Compatibility
 
@@ -454,8 +560,12 @@ LSTMAutoencoder(
 2. **Attacks have no effect**: Simulation must be running (Simulate mode + Start)
 3. **Backend shows OFFLINE**: Run `docker compose up --build` and verify `http://localhost:8001/health` (backend is optional for attack simulation)
 4. **Anomaly panel shows "not loaded"**: Backend must be running with the LSTM model at the `LSTM_MODEL_PATH` location
-5. **Performance Issues**: Close other browser tabs; reduce number of active attacks
+5. **Performance Issues**: Close other browser tabs; reduce number of active attacks or failures
 6. **Layout not saving**: Use Export Layout button to save as JSON file
+7. **Motor stays at 0%**: Check that the motor's `run` input is wired and the upstream logic is energized; motors have a configurable `startDelay` before ramping
+8. **Scan debugger blank**: Simulation must be running; scan data only populates when the PLC scan cycle is active
+9. **No stations detected**: Stations are auto-detected from component labels and spatial clustering — ensure a preset is loaded
+10. **Training scenario won't complete**: Check objective checklist — all objectives must be met before time runs out; use hints if stuck
 
 ### Debug Information
 Open the browser console (F12) to see:
@@ -466,4 +576,4 @@ Open the browser console (F12) to see:
 
 ---
 
-**Enjoy learning about industrial automation and ICS security with this interactive PLC emulator!** 🏭🛡️
+**Enjoy learning about industrial automation, PLC programming, and ICS security with this interactive emulator!** 🏭🔬🎓🛡️

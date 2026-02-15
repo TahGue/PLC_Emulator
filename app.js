@@ -16,6 +16,10 @@ class PLCEmulatorApp {
             this.alarms = new AlarmManager();
             this.telemetry = new TelemetryClient();
             this.attackSim = new AttackSimulator();
+            this.failureEngine = new FailureEngine();
+            this.stationManager = new StationManager();
+            this.scanDebugger = null; // initialized in initScanDebugger after DOM ready
+            this.trainingEngine = new TrainingEngine();
 
             this.mode = 'edit';
             this.isRunning = false;
@@ -35,6 +39,7 @@ class PLCEmulatorApp {
             this.consecutiveFailures = 0;
             this.maxBackoffMs = 8000;
             this.impactBuffer = [];
+            this.failureImpactBuffer = [];
 
             // LSTM anomaly detection state
             this.anomalyState = {
@@ -47,6 +52,10 @@ class PLCEmulatorApp {
             this.initEditorCallbacks();
             this.initEventListeners();
             this.initAttackPanel();
+            this.initFailurePanel();
+            this.initStationPanel();
+            this.initScanDebugger();
+            this.initTrainingPanel();
             this.initPLCCallbacks();
             this.buildIODisplays();
             this.updateStatusBar();
@@ -308,6 +317,525 @@ class PLCEmulatorApp {
         };
     }
 
+    // ── Failure Injection Panel ─────────────────────────────────
+    initFailurePanel() {
+        const listEl = document.getElementById('failure-list');
+        if (!listEl) return;
+
+        for (const [id, def] of this.failureEngine.failures) {
+            const item = document.createElement('div');
+            item.className = 'failure-item';
+            item.dataset.failureId = id;
+            item.dataset.category = def.category;
+            item.innerHTML = `
+                <div class="failure-item-header">
+                    <span class="failure-item-name">${def.icon} ${def.name}</span>
+                    <button class="failure-toggle" data-failure-id="${id}"></button>
+                </div>
+                <div class="failure-item-meta">
+                    <span class="failure-cat-badge">${def.category}</span>
+                    <span class="failure-severity severity-${def.severity}">${def.severity}</span>
+                </div>
+                <div class="failure-item-desc">${def.description}</div>
+                <div class="failure-severity-slider">
+                    <label>Severity</label>
+                    <input type="range" min="10" max="100" value="80" data-failure-id="${id}">
+                    <span class="failure-severity-val">80%</span>
+                </div>`;
+            listEl.appendChild(item);
+        }
+
+        // Toggle failure on/off
+        listEl.addEventListener('click', (e) => {
+            const toggleBtn = e.target.closest('.failure-toggle');
+            if (!toggleBtn) return;
+            const failureId = toggleBtn.dataset.failureId;
+            const item = toggleBtn.closest('.failure-item');
+            if (this.failureEngine.isActive(failureId)) {
+                this.failureEngine.deactivateFailure(failureId);
+                toggleBtn.classList.remove('on');
+                item.classList.remove('active');
+            } else {
+                const slider = item.querySelector('input[type="range"]');
+                const severity = slider ? parseInt(slider.value) / 100 : 0.8;
+                this.failureEngine.activateFailure(failureId, severity);
+                toggleBtn.classList.add('on');
+                item.classList.add('active');
+            }
+            this.updateFailureStatus();
+        });
+
+        // Severity slider
+        listEl.addEventListener('input', (e) => {
+            if (e.target.type !== 'range') return;
+            const failureId = e.target.dataset.failureId;
+            const val = parseInt(e.target.value);
+            const label = e.target.parentElement.querySelector('.failure-severity-val');
+            if (label) label.textContent = val + '%';
+            if (this.failureEngine.isActive(failureId)) {
+                this.failureEngine.activeFailures.get(failureId).severity = val / 100;
+            }
+        });
+
+        // Category filter
+        document.querySelectorAll('.failure-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.failure-filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const filter = btn.dataset.filter;
+                listEl.querySelectorAll('.failure-item').forEach(item => {
+                    item.style.display = (filter === 'all' || item.dataset.category === filter) ? '' : 'none';
+                });
+            });
+        });
+
+        // Reset all failures
+        const resetBtn = document.getElementById('failure-reset-btn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                this.failureEngine.reset();
+                listEl.querySelectorAll('.failure-item').forEach(item => {
+                    item.classList.remove('active');
+                    item.querySelector('.failure-toggle').classList.remove('on');
+                    const slider = item.querySelector('input[type="range"]');
+                    if (slider) { slider.value = 80; }
+                    const label = item.querySelector('.failure-severity-val');
+                    if (label) label.textContent = '80%';
+                });
+                this.failureImpactBuffer = [];
+                this.updateFailureStatus();
+                this.updateFailureImpactFeed();
+            });
+        }
+
+        // Wire failure engine callback
+        this.failureEngine.onImpact = (impacts) => {
+            this.failureImpactBuffer = impacts.slice(-20).concat(this.failureImpactBuffer).slice(0, 40);
+            this.updateFailureImpactFeed();
+            this.updateFailureStatus();
+        };
+    }
+
+    updateFailureStatus() {
+        const el = document.getElementById('failure-status');
+        if (!el) return;
+        const count = this.failureEngine.activeFailures.size;
+        if (count === 0) {
+            el.textContent = 'No failures active';
+            el.classList.remove('active');
+        } else {
+            el.textContent = `${count} failure${count > 1 ? 's' : ''} active`;
+            el.classList.add('active');
+        }
+        const countEl = document.getElementById('failure-active-count');
+        if (countEl) countEl.textContent = count;
+        const impactEl = document.getElementById('failure-impact-count');
+        if (impactEl) impactEl.textContent = this.failureEngine.impactLog.length;
+        const compEl = document.getElementById('failure-comp-count');
+        if (compEl) {
+            const affectedComps = new Set(this.failureImpactBuffer.map(i => i.compId));
+            compEl.textContent = affectedComps.size;
+        }
+    }
+
+    updateFailureImpactFeed() {
+        const el = document.getElementById('failure-impact-feed');
+        if (!el) return;
+        if (this.failureImpactBuffer.length === 0) {
+            el.innerHTML = '<div class="no-alarms">No failure impacts</div>';
+            return;
+        }
+        el.innerHTML = this.failureImpactBuffer.slice(0, 20).map(imp => {
+            const effectStr = Object.entries(imp).filter(([k]) =>
+                !['failureId','failureName','compId','compType','compLabel','severity','timestamp','effect'].includes(k)
+            ).map(([k,v]) => `${k}:${v}`).join(' ');
+            const time = new Date(imp.timestamp).toLocaleTimeString('en', {hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+            return `<div class="failure-impact-item">
+                <span class="fi-comp">${imp.compLabel}</span>
+                <span class="fi-failure">${imp.failureName}</span>
+                <span class="fi-effect">${imp.effect}${effectStr ? ' ' + effectStr : ''}</span>
+                <span class="fi-time">${time}</span>
+            </div>`;
+        }).join('');
+    }
+
+    // ── Station Panel ──────────────────────────────────────────
+    initStationPanel() {
+        // Wire station manager update callback for periodic UI refresh
+        this.stationManager.onUpdate = (stations) => {
+            // Throttle UI updates to every 10th tick
+            if (this.stationManager.tickCount % 10 !== 0) return;
+            this.updateStationUI();
+        };
+    }
+
+    updateStationUI() {
+        const stats = this.stationManager.getStats();
+        const oee = this.stationManager.getOEE();
+
+        const setT = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setT('station-running-count', stats.running);
+        setT('station-idle-count', stats.idle);
+        setT('station-faulted-count', stats.faulted);
+        setT('station-total-cycles', stats.totalCycles);
+        setT('station-availability', oee.availability + '%');
+        setT('station-performance', oee.performance + '%');
+
+        const oeeBadge = document.getElementById('station-oee-badge');
+        if (oeeBadge) oeeBadge.textContent = 'OEE: ' + oee.oee + '%';
+        const countBadge = document.getElementById('station-count-badge');
+        if (countBadge) countBadge.textContent = stats.total + ' station' + (stats.total !== 1 ? 's' : '');
+
+        // Update individual station cards
+        const stations = this.stationManager.getAll();
+        for (const station of stations) {
+            const card = document.getElementById('scard-' + station.id);
+            if (!card) continue;
+
+            // Update status class
+            card.className = 'station-card ' + station.status;
+
+            // Update status badge
+            const statusEl = card.querySelector('.station-card-status');
+            if (statusEl) {
+                statusEl.textContent = station.status;
+                statusEl.className = 'station-card-status ' + station.status;
+            }
+
+            // Update KPIs
+            const kpiEls = card.querySelectorAll('.station-kpi-value');
+            if (kpiEls.length >= 4) {
+                kpiEls[0].textContent = station.metrics.cyclesCompleted;
+                const avgCT = station.metrics.avgCycleTime;
+                kpiEls[1].textContent = avgCT > 0 ? (avgCT / 1000).toFixed(1) + 's' : '—';
+                const eff = Math.round(station.metrics.efficiency);
+                kpiEls[2].textContent = eff + '%';
+                kpiEls[2].className = 'station-kpi-value ' + (eff >= 90 ? 'good' : eff >= 70 ? 'warn' : 'bad');
+                const up = Math.round(station.metrics.uptime * 10) / 10;
+                kpiEls[3].textContent = up + '%';
+                kpiEls[3].className = 'station-kpi-value ' + (up >= 95 ? 'good' : up >= 80 ? 'warn' : 'bad');
+            }
+
+            // Update faults
+            const faultEl = card.querySelector('.station-card-faults');
+            if (faultEl) {
+                if (station.faults.length > 0) {
+                    faultEl.style.display = '';
+                    faultEl.innerHTML = station.faults.map(f =>
+                        `<span>⚠ ${f.compLabel}: ${f.fault}</span>`
+                    ).join('');
+                } else {
+                    faultEl.style.display = 'none';
+                }
+            }
+        }
+    }
+
+    renderStationCards() {
+        const container = document.getElementById('station-cards');
+        if (!container) return;
+
+        const stations = this.stationManager.getAll();
+        if (stations.length === 0) {
+            container.innerHTML = '<div class="no-alarms">No stations detected</div>';
+            return;
+        }
+
+        container.innerHTML = stations.map(station => {
+            const compCount = station.componentIds.size;
+            const inCount = station.inputs.length;
+            const outCount = station.outputs.length;
+            return `<div class="station-card ${station.status}" id="scard-${station.id}">
+                <div class="station-card-header">
+                    <span class="station-card-name">${station.icon} ${station.name}</span>
+                    <span class="station-card-status ${station.status}">${station.status}</span>
+                </div>
+                <div class="station-card-meta">
+                    ${compCount} components · ${inCount} in · ${outCount} out
+                </div>
+                <div class="station-card-kpis">
+                    <div class="station-kpi">
+                        <span class="station-kpi-label">Cycles</span>
+                        <span class="station-kpi-value">0</span>
+                    </div>
+                    <div class="station-kpi">
+                        <span class="station-kpi-label">Avg Time</span>
+                        <span class="station-kpi-value">—</span>
+                    </div>
+                    <div class="station-kpi">
+                        <span class="station-kpi-label">Efficiency</span>
+                        <span class="station-kpi-value good">100%</span>
+                    </div>
+                    <div class="station-kpi">
+                        <span class="station-kpi-label">Uptime</span>
+                        <span class="station-kpi-value good">100%</span>
+                    </div>
+                </div>
+                <div class="station-card-faults" style="display:none"></div>
+            </div>`;
+        }).join('');
+
+        // Update summary counts
+        this.updateStationUI();
+    }
+
+    // ── Scan Cycle Debugger ─────────────────────────────────────
+    initScanDebugger() {
+        this.scanDebugger = new ScanDebugger('scan-timeline-canvas', 'scan-rung-canvas');
+
+        // Wire PLC scan complete to push data into debugger
+        this.plc.onScanComplete.push(() => {
+            const rec = this.plc.lastScanRecord;
+            if (!rec) return;
+            this.scanDebugger.pushScan(rec);
+
+            // Throttle rendering to every 5th scan
+            if (rec.scanNumber % 5 === 0) {
+                this.scanDebugger.render();
+                this.updateScanStats();
+            }
+        });
+
+        // Pause / Resume
+        const pauseBtn = document.getElementById('scan-pause-btn');
+        if (pauseBtn) {
+            pauseBtn.addEventListener('click', () => {
+                const paused = this.scanDebugger.togglePause();
+                pauseBtn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+                pauseBtn.classList.toggle('active', paused);
+            });
+        }
+
+        // Clear
+        const clearBtn = document.getElementById('scan-clear-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.scanDebugger.clear();
+                this.scanDebugger.render();
+                this.updateScanStats();
+            });
+        }
+    }
+
+    updateScanStats() {
+        const stats = this.scanDebugger.getStats();
+        const setT = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setT('scan-rate-badge', stats.scanRate.toFixed(1) + ' scans/s');
+        setT('scan-avg-badge', 'avg: ' + stats.avgTotalUs.toFixed(0) + 'µs');
+        setT('scan-max-badge', 'max: ' + stats.maxTotalUs.toFixed(0) + 'µs');
+    }
+
+    // ── Training Scenario Panel ─────────────────────────────────
+    initTrainingPanel() {
+        const listEl = document.getElementById('training-scenario-list');
+        if (!listEl) return;
+
+        // Build scenario cards
+        for (const [id, def] of this.trainingEngine.scenarios) {
+            const stars = Array.from({ length: 5 }, (_, i) =>
+                `<span class="star${i < def.difficulty ? '' : ' empty'}">${i < def.difficulty ? '★' : '☆'}</span>`
+            ).join('');
+            const timeMins = def.timeLimit ? Math.round(def.timeLimit / 60000) : '∞';
+
+            const card = document.createElement('div');
+            card.className = 'training-scenario-card';
+            card.dataset.scenarioId = id;
+            card.dataset.category = def.category;
+            card.innerHTML = `
+                <div class="training-scenario-card-header">
+                    <span class="training-scenario-card-title">${def.icon} ${def.title}</span>
+                    <div class="training-difficulty">${stars}</div>
+                </div>
+                <div class="training-scenario-card-meta">
+                    <span class="training-cat-badge">${def.category}</span>
+                    <span class="training-time-badge">${timeMins} min</span>
+                    <span class="training-time-badge">${def.objectives.length} objectives</span>
+                </div>
+                <div class="training-scenario-card-desc">${def.description}</div>
+                <button class="training-scenario-card-start" data-scenario-id="${id}">▶ Start Challenge</button>`;
+            listEl.appendChild(card);
+        }
+
+        // Start scenario
+        listEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.training-scenario-card-start');
+            if (!btn) return;
+            const scenarioId = btn.dataset.scenarioId;
+            this._startTrainingScenario(scenarioId);
+        });
+
+        // Category filter
+        document.querySelectorAll('.training-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.training-filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const filter = btn.dataset.filter;
+                listEl.querySelectorAll('.training-scenario-card').forEach(card => {
+                    card.style.display = (filter === 'all' || card.dataset.category === filter) ? '' : 'none';
+                });
+            });
+        });
+
+        // Stop button
+        const stopBtn = document.getElementById('training-stop-btn');
+        if (stopBtn) {
+            stopBtn.addEventListener('click', () => {
+                this.trainingEngine.stopScenario(this);
+                this._showTrainingSelector();
+            });
+        }
+
+        // Hint button
+        const hintBtn = document.getElementById('training-hint-btn');
+        if (hintBtn) {
+            hintBtn.addEventListener('click', () => {
+                const hint = this.trainingEngine.getHint();
+                const display = document.getElementById('training-hint-display');
+                const countEl = document.getElementById('training-hint-count');
+                if (hint && display) {
+                    display.style.display = '';
+                    display.textContent = hint;
+                }
+                if (countEl) {
+                    const remaining = (this.trainingEngine.activeScenario?.hints?.length || 0) - this.trainingEngine.hintsUsed;
+                    countEl.textContent = remaining > 0 ? `${remaining} hint${remaining > 1 ? 's' : ''} left (-${this.trainingEngine.hintPenalty}pts each)` : 'No hints left';
+                }
+            });
+        }
+
+        // Back to scenarios button
+        const backBtn = document.getElementById('training-back-btn');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => this._showTrainingSelector());
+        }
+
+        // Wire engine callbacks
+        this.trainingEngine.onStateChange = (state) => this._updateTrainingStatus(state);
+        this.trainingEngine.onObjectiveUpdate = (objs) => this._renderTrainingObjectives(objs);
+        this.trainingEngine.onComplete = (result) => this._showTrainingSummary(result);
+
+        // Timer update interval
+        this._trainingTimerHandle = setInterval(() => {
+            if (this.trainingEngine.state !== 'running') return;
+            const remaining = this.trainingEngine.getTimeRemaining();
+            const timerEl = document.getElementById('training-timer');
+            if (timerEl && remaining !== null) {
+                const secs = Math.ceil(remaining / 1000);
+                const m = Math.floor(secs / 60);
+                const s = secs % 60;
+                timerEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+                timerEl.classList.toggle('urgent', secs < 30);
+            }
+        }, 250);
+    }
+
+    _startTrainingScenario(scenarioId) {
+        this.trainingEngine.startScenario(scenarioId, this);
+
+        // Show overlay, hide selector and summary
+        const selector = document.getElementById('training-selector');
+        const overlay = document.getElementById('training-overlay');
+        const summary = document.getElementById('training-summary');
+        const stopBtn = document.getElementById('training-stop-btn');
+        if (selector) selector.style.display = 'none';
+        if (overlay) overlay.style.display = '';
+        if (summary) summary.style.display = 'none';
+        if (stopBtn) stopBtn.style.display = '';
+
+        // Set title
+        const titleEl = document.getElementById('training-active-title');
+        if (titleEl) {
+            const def = this.trainingEngine.activeScenario;
+            titleEl.textContent = `${def.icon} ${def.title}`;
+        }
+
+        // Reset hint display
+        const hintDisplay = document.getElementById('training-hint-display');
+        if (hintDisplay) hintDisplay.style.display = 'none';
+        const hintCount = document.getElementById('training-hint-count');
+        if (hintCount) {
+            const total = this.trainingEngine.activeScenario?.hints?.length || 0;
+            hintCount.textContent = `${total} hint${total > 1 ? 's' : ''} available (-${this.trainingEngine.hintPenalty}pts each)`;
+        }
+
+        // Render initial objectives
+        this._renderTrainingObjectives(this.trainingEngine.objectiveResults);
+    }
+
+    _renderTrainingObjectives(objectives) {
+        const container = document.getElementById('training-objectives');
+        if (!container) return;
+        container.innerHTML = objectives.map(obj =>
+            `<div class="training-objective${obj.completed ? ' completed' : ''}">
+                <div class="training-obj-check">${obj.completed ? '✓' : ''}</div>
+                <span class="training-obj-text">${obj.text}</span>
+                <span class="training-obj-points">${obj.points}pts</span>
+            </div>`
+        ).join('');
+    }
+
+    _updateTrainingStatus(state) {
+        const badge = document.getElementById('training-status-badge');
+        if (!badge) return;
+        badge.className = 'training-status-badge';
+        if (state === 'running') {
+            badge.textContent = 'Challenge Active';
+            badge.classList.add('active');
+        } else if (state === 'completed') {
+            badge.textContent = 'Completed!';
+            badge.classList.add('completed');
+        } else if (state === 'failed') {
+            badge.textContent = 'Time\'s Up!';
+            badge.classList.add('failed');
+        } else {
+            badge.textContent = 'Select a scenario';
+        }
+    }
+
+    _showTrainingSummary(result) {
+        const overlay = document.getElementById('training-overlay');
+        const summary = document.getElementById('training-summary');
+        const stopBtn = document.getElementById('training-stop-btn');
+        if (overlay) overlay.style.display = 'none';
+        if (summary) summary.style.display = '';
+        if (stopBtn) stopBtn.style.display = 'none';
+
+        const headerEl = document.getElementById('training-summary-header');
+        const scoreEl = document.getElementById('training-summary-score');
+        const objEl = document.getElementById('training-summary-objectives');
+        const detailsEl = document.getElementById('training-summary-details');
+
+        const passed = result.score >= result.maxScore * 0.5;
+        if (headerEl) {
+            headerEl.textContent = passed ? '🎉 Challenge Complete!' : '💔 Challenge Failed';
+            headerEl.className = 'training-summary-header ' + (passed ? 'completed' : 'failed');
+        }
+        if (scoreEl) scoreEl.textContent = `${result.score} / ${result.maxScore}`;
+        if (objEl) {
+            objEl.innerHTML = result.objectives.map(obj =>
+                `<div class="training-summary-obj ${obj.completed ? 'done' : 'missed'}">
+                    ${obj.completed ? '✅' : '❌'} ${obj.text} (${obj.points}pts)
+                </div>`
+            ).join('');
+        }
+        if (detailsEl) {
+            const secs = Math.round(result.time / 1000);
+            detailsEl.textContent = `Time: ${Math.floor(secs / 60)}:${(secs % 60).toString().padStart(2, '0')} · Hints used: ${result.hintsUsed}`;
+        }
+    }
+
+    _showTrainingSelector() {
+        const selector = document.getElementById('training-selector');
+        const overlay = document.getElementById('training-overlay');
+        const summary = document.getElementById('training-summary');
+        const stopBtn = document.getElementById('training-stop-btn');
+        if (selector) selector.style.display = '';
+        if (overlay) overlay.style.display = 'none';
+        if (summary) summary.style.display = 'none';
+        if (stopBtn) stopBtn.style.display = 'none';
+        this._updateTrainingStatus('idle');
+    }
+
     updateAttackStatus() {
         const el = document.getElementById('attack-status');
         if (!el) return;
@@ -536,6 +1064,12 @@ class PLCEmulatorApp {
             // Real-time attack simulation + packet analysis
             const analysis = this.attackSim.tick(this.engine, this.plc, dt);
             this.updatePacketLog(this.attackSim.packetLog.slice(-5));
+
+            // Failure injection engine
+            this.failureEngine.tick(this.engine, dt);
+
+            // Station manager tick
+            this.stationManager.tick(this.engine, dt);
 
             // Reset PLC cycle time when no attacks manipulate it
             if (!this.attackSim.activeAttacks.size) this.plc.cycleTime = 100;
@@ -1361,6 +1895,10 @@ class PLCEmulatorApp {
             }
             console.log('[PLC] Preset rendered successfully');
 
+            // Auto-detect stations from layout
+            this.stationManager.autoDetect(this.engine);
+            this.renderStationCards();
+
         } catch (err) {
             console.error('[PLC] loadPreset error:', err);
         }
@@ -1382,21 +1920,21 @@ class PLCEmulatorApp {
                     { id: 'gate_conv1', type: 'and_gate', x: 370, y: 110, props: { label: 'Conv1' } },
                     { id: 'gate_conv2', type: 'and_gate', x: 460, y: 110, props: { label: 'Conv2' } },
                     // Conveyor + Motor
-                    { id: 'motor_main', type: 'motor', x: 40, y: 280, props: { address: 'O:0/0', label: 'M_Conv', ratedRPM: 1800 } },
-                    { id: 'conv_main', type: 'conveyor', x: 180, y: 290, props: { label: 'Main Conv', speed: 1, length: 3 } },
+                    { id: 'motor_main', type: 'motor', x: 40, y: 280, props: { address: 'O:0/0', label: 'M_Conv', ratedRPM: 1800, startDelay: 250, accelTime: 1200, ratedCurrent: 4.5, overloadThreshold: 1.4, overloadDelay: 3000 } },
+                    { id: 'conv_main', type: 'conveyor', x: 180, y: 290, props: { label: 'Main Conv', speed: 1.2, length: 3, accelTime: 600, slip: 0.02, maxItems: 6 } },
                     // Fill Station
                     { id: 'sens_fill', type: 'proximity_sensor', x: 360, y: 280, props: { address: 'I:0/3', label: 'PE_Fill', detectRange: 10 } },
                     { id: 'gate_fill', type: 'and_gate', x: 430, y: 200, props: { label: 'Fill En' } },
-                    { id: 'val_fill', type: 'solenoid_valve', x: 520, y: 200, props: { address: 'O:0/1', label: 'V_Fill', type: '2-way' } },
+                    { id: 'val_fill', type: 'solenoid_valve', x: 520, y: 200, props: { address: 'O:0/1', label: 'V_Fill', type: '2-way', switchDelay: 60 } },
                     { id: 'pipe_fill', type: 'pipe', x: 520, y: 280, props: { label: 'Fill Pipe' } },
                     // Cap Station
                     { id: 'sens_cap', type: 'proximity_sensor', x: 620, y: 280, props: { address: 'I:0/4', label: 'PE_Cap', detectRange: 10 } },
                     { id: 'gate_cap', type: 'and_gate', x: 690, y: 200, props: { label: 'Cap En' } },
-                    { id: 'motor_cap', type: 'motor', x: 780, y: 200, props: { address: 'O:0/2', label: 'M_Cap', ratedRPM: 900 } },
+                    { id: 'motor_cap', type: 'motor', x: 780, y: 200, props: { address: 'O:0/2', label: 'M_Cap', ratedRPM: 900, startDelay: 150, accelTime: 800, ratedCurrent: 2.5, overloadThreshold: 1.6, overloadDelay: 2500 } },
                     // Quality + Reject
                     { id: 'sens_qual', type: 'photo_sensor', x: 860, y: 280, props: { address: 'I:0/5', label: 'PE_Qual', beamType: 'through' } },
                     { id: 'light_qual', type: 'indicator_light', x: 860, y: 200, props: { address: 'O:0/3', label: 'L_Qual', color: 'green' } },
-                    { id: 'val_reject', type: 'solenoid_valve', x: 960, y: 200, props: { address: 'O:0/4', label: 'V_Reject', type: '2-way' } },
+                    { id: 'val_reject', type: 'solenoid_valve', x: 960, y: 200, props: { address: 'O:0/4', label: 'V_Reject', type: '2-way', switchDelay: 50 } },
                     { id: 'pipe_reject', type: 'pipe', x: 960, y: 280, props: { label: 'Reject' } },
                     // Tank + Monitoring
                     { id: 'sens_tank', type: 'level_sensor', x: 40, y: 400, props: { address: 'I:0/6', label: 'LT_Tank' } },
@@ -1473,8 +2011,8 @@ class PLCEmulatorApp {
                     { id: 'sw_start', type: 'limit_switch', x: 20, y: 60, props: { address: 'I:0/1', label: 'START' } },
                     { id: 'sw_stop', type: 'limit_switch', x: 100, y: 60, props: { address: 'I:0/0', label: 'STOP' } },
                     // Infeed
-                    { id: 'motor_in', type: 'motor', x: 20, y: 200, props: { address: 'O:0/0', label: 'M_Infeed' } },
-                    { id: 'conv_in', type: 'conveyor', x: 140, y: 210, props: { label: 'Infeed', speed: 1, length: 2 } },
+                    { id: 'motor_in', type: 'motor', x: 20, y: 200, props: { address: 'O:0/0', label: 'M_Infeed', ratedRPM: 1200, startDelay: 180, accelTime: 1000, ratedCurrent: 3.5 } },
+                    { id: 'conv_in', type: 'conveyor', x: 140, y: 210, props: { label: 'Infeed Conv', speed: 0.8, length: 2, accelTime: 400, slip: 0.03 } },
                     // Detection
                     { id: 'sens_color', type: 'photo_sensor', x: 300, y: 210, props: { address: 'I:0/3', label: 'PE_Color' } },
                     // Path Logic
@@ -1482,16 +2020,16 @@ class PLCEmulatorApp {
                     { id: 'gate_a', type: 'and_gate', x: 460, y: 100, props: { label: 'Path A' } },
                     { id: 'gate_b', type: 'and_gate', x: 460, y: 180, props: { label: 'Path B' } },
                     // Diverters
-                    { id: 'div_a', type: 'pneumatic_cyl', x: 560, y: 100, props: { address: 'O:0/1', label: 'Div_A' } },
-                    { id: 'div_b', type: 'pneumatic_cyl', x: 560, y: 180, props: { address: 'O:0/2', label: 'Div_B' } },
+                    { id: 'div_a', type: 'pneumatic_cyl', x: 560, y: 100, props: { address: 'O:0/1', label: 'Div_A', stroke: 80, travelTime: 600, valveDelay: 40, cushionPct: 15 } },
+                    { id: 'div_b', type: 'pneumatic_cyl', x: 560, y: 180, props: { address: 'O:0/2', label: 'Div_B', stroke: 80, travelTime: 600, valveDelay: 40, cushionPct: 15 } },
                     // Path A
                     { id: 'pipe_a', type: 'pipe', x: 660, y: 100, props: { label: 'Chute A' } },
-                    { id: 'motor_a', type: 'motor', x: 760, y: 80, props: { label: 'M_BinA' } },
-                    { id: 'conv_a', type: 'conveyor', x: 840, y: 90, props: { label: 'Bin A', speed: 1, length: 2 } },
+                    { id: 'motor_a', type: 'motor', x: 760, y: 80, props: { label: 'M_BinA', ratedRPM: 900, startDelay: 120, accelTime: 600, ratedCurrent: 2.0 } },
+                    { id: 'conv_a', type: 'conveyor', x: 840, y: 90, props: { label: 'Bin A Conv', speed: 0.6, length: 2, accelTime: 350 } },
                     // Path B
                     { id: 'pipe_b', type: 'pipe', x: 660, y: 200, props: { label: 'Chute B' } },
-                    { id: 'motor_b', type: 'motor', x: 760, y: 180, props: { label: 'M_BinB' } },
-                    { id: 'conv_b', type: 'conveyor', x: 840, y: 190, props: { label: 'Bin B', speed: 1, length: 2 } },
+                    { id: 'motor_b', type: 'motor', x: 760, y: 180, props: { label: 'M_BinB', ratedRPM: 900, startDelay: 120, accelTime: 600, ratedCurrent: 2.0 } },
+                    { id: 'conv_b', type: 'conveyor', x: 840, y: 190, props: { label: 'Bin B Conv', speed: 0.6, length: 2, accelTime: 350 } },
                     // Counter + Indicators
                     { id: 'counter_sort', type: 'counter_ctu', x: 300, y: 320, props: { label: 'Sorted', preset: 100 } },
                     { id: 'light_a', type: 'indicator_light', x: 960, y: 80, props: { label: 'Bin A', color: 'green' } },
@@ -1549,17 +2087,17 @@ class PLCEmulatorApp {
                     { id: 'sw_start', type: 'limit_switch', x: 40, y: 250, props: { address: 'I:0/1', label: 'START' } },
                     { id: 'sw_heat', type: 'limit_switch', x: 40, y: 330, props: { address: 'I:0/2', label: 'Heat' } },
                     // Feed side
-                    { id: 'tk_feed', type: 'tank', x: 120, y: 60, props: { label: 'Feed Tank', capacity: 100 } },
-                    { id: 'pump_feed', type: 'pump', x: 120, y: 250, props: { address: 'O:0/0', label: 'P_Feed' } },
+                    { id: 'tk_feed', type: 'tank', x: 120, y: 60, props: { label: 'Feed Tank', capacity: 100, fillRate: 12, drainRate: 8 } },
+                    { id: 'pump_feed', type: 'pump', x: 120, y: 250, props: { address: 'O:0/0', label: 'P_Feed', flowRate: 40, startDelay: 200, accelTime: 1200, ratedCurrent: 3.5, overloadThreshold: 1.5, overloadDelay: 3000 } },
                     { id: 'pipe_feed', type: 'pipe', x: 240, y: 180, props: { label: 'Feed Pipe' } },
-                    { id: 'val_in', type: 'solenoid_valve', x: 340, y: 120, props: { address: 'O:0/1', label: 'V_Inlet' } },
+                    { id: 'val_in', type: 'solenoid_valve', x: 340, y: 120, props: { address: 'O:0/1', label: 'V_Inlet', switchDelay: 100 } },
                     { id: 'pipe_inlet', type: 'pipe', x: 340, y: 180, props: { label: 'Inlet' } },
                     // Mix side
-                    { id: 'tk_mix', type: 'tank', x: 440, y: 60, props: { label: 'Mix Tank', capacity: 200 } },
+                    { id: 'tk_mix', type: 'tank', x: 440, y: 60, props: { label: 'Mix Tank', capacity: 200, fillRate: 15, drainRate: 10 } },
                     { id: 'mixer_ag', type: 'mixer', x: 440, y: 250, props: { address: 'O:0/2', label: 'Agitator' } },
-                    { id: 'heater_main', type: 'heater', x: 560, y: 180, props: { address: 'O:0/3', label: 'Heater' } },
+                    { id: 'heater_main', type: 'heater', x: 560, y: 180, props: { address: 'O:0/3', label: 'Heater', power: 2000, heatRate: 3.5, coolRate: 1.5, ambientTemp: 22, maxTemp: 120 } },
                     // Drain
-                    { id: 'val_drain', type: 'solenoid_valve', x: 560, y: 250, props: { address: 'O:0/4', label: 'V_Drain' } },
+                    { id: 'val_drain', type: 'solenoid_valve', x: 560, y: 250, props: { address: 'O:0/4', label: 'V_Drain', switchDelay: 120 } },
                     { id: 'pipe_drain', type: 'pipe', x: 560, y: 320, props: { label: 'Drain' } },
                     // Sensors
                     { id: 'temp_sens', type: 'temp_sensor', x: 560, y: 60, props: { address: 'I:0/3', label: 'Temp' } },
@@ -1634,13 +2172,13 @@ class PLCEmulatorApp {
                 version: 1,
                 components: [
                     // Physical System: Conveyors
-                    { id: 'conv_main', type: 'conveyor', x: 380, y: 380, props: { label: 'Main Line', length: 5 } },
-                    { id: 'conv_a', type: 'conveyor', x: 200, y: 300, props: { label: 'Ln A', length: 2 } },
-                    { id: 'conv_b', type: 'conveyor', x: 560, y: 300, props: { label: 'Ln B', length: 2 } },
+                    { id: 'conv_main', type: 'conveyor', x: 380, y: 380, props: { label: 'Main Conv', length: 5, speed: 1.5, accelTime: 800, slip: 0.01, maxItems: 8 } },
+                    { id: 'conv_a', type: 'conveyor', x: 200, y: 300, props: { label: 'Ln A Conv', length: 2, speed: 1.0, accelTime: 500, slip: 0.02 } },
+                    { id: 'conv_b', type: 'conveyor', x: 560, y: 300, props: { label: 'Ln B Conv', length: 2, speed: 1.0, accelTime: 500, slip: 0.02 } },
 
-                    { id: 'motor_main', type: 'motor', x: 380, y: 280, props: { label: 'Main Mtr' } },
-                    { id: 'motor_a', type: 'motor', x: 200, y: 200, props: { label: 'Mtr A' } },
-                    { id: 'motor_b', type: 'motor', x: 560, y: 200, props: { label: 'Mtr B' } },
+                    { id: 'motor_main', type: 'motor', x: 380, y: 280, props: { label: 'Main Mtr', ratedRPM: 1800, startDelay: 300, accelTime: 1500, ratedCurrent: 5.5, overloadThreshold: 1.3 } },
+                    { id: 'motor_a', type: 'motor', x: 200, y: 200, props: { label: 'Mtr A', ratedRPM: 1200, startDelay: 150, accelTime: 800, ratedCurrent: 3.0 } },
+                    { id: 'motor_b', type: 'motor', x: 560, y: 200, props: { label: 'Mtr B', ratedRPM: 1200, startDelay: 150, accelTime: 800, ratedCurrent: 3.0 } },
 
                     // Logic: Sequencer
                     { id: 'sw_sys', type: 'limit_switch', x: 40, y: 60, props: { label: 'System Start', normallyOpen: true } },
@@ -1736,13 +2274,13 @@ class PLCEmulatorApp {
             cip_sequence: {
                 version: 1,
                 components: [
-                    { id: 'tk_src', type: 'tank', x: 100, y: 50, props: { label: 'Water', capacity: 200 } },
-                    { id: 'tk_chem', type: 'tank', x: 250, y: 50, props: { label: 'Chem', capacity: 100 } },
-                    { id: 'v_water', type: 'solenoid_valve', x: 100, y: 150, props: { label: 'V_Wtr' } },
-                    { id: 'v_chem', type: 'solenoid_valve', x: 250, y: 150, props: { label: 'V_Chm' } },
+                    { id: 'tk_src', type: 'tank', x: 100, y: 50, props: { label: 'Water Tank', capacity: 200, fillRate: 20, drainRate: 15 } },
+                    { id: 'tk_chem', type: 'tank', x: 250, y: 50, props: { label: 'Chem Tank', capacity: 100, fillRate: 8, drainRate: 6 } },
+                    { id: 'v_water', type: 'solenoid_valve', x: 100, y: 150, props: { label: 'V_Wtr', switchDelay: 90 } },
+                    { id: 'v_chem', type: 'solenoid_valve', x: 250, y: 150, props: { label: 'V_Chm', switchDelay: 70 } },
                     { id: 'pipe_mix', type: 'pipe', x: 180, y: 220, props: { label: 'Manifold' } },
-                    { id: 'p_main', type: 'pump', x: 180, y: 280, props: { label: 'Main Pump' } },
-                    { id: 'tk_dest', type: 'tank', x: 180, y: 400, props: { label: 'CIP Tank', capacity: 500 } },
+                    { id: 'p_main', type: 'pump', x: 180, y: 280, props: { label: 'CIP Pump', flowRate: 60, startDelay: 180, accelTime: 1000, ratedCurrent: 4.0, overloadThreshold: 1.4 } },
+                    { id: 'tk_dest', type: 'tank', x: 180, y: 400, props: { label: 'CIP Tank', capacity: 500, fillRate: 25, drainRate: 20 } },
 
                     { id: 'sw_start', type: 'limit_switch', x: 400, y: 50, props: { label: 'Start' } },
                     { id: 'latch_run', type: 'sr_latch', x: 520, y: 50, props: { label: 'Seq Run' } },

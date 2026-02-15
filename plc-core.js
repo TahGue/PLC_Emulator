@@ -19,6 +19,11 @@ class PLCCore {
         this.onInputChange = [];
         this.onOutputChange = [];
         this.onScanComplete = [];
+
+        // Scan debugger instrumentation
+        this.scanHistory = [];       // last N scan records
+        this.maxScanHistory = 50;
+        this.lastScanRecord = null;  // most recent scan detail
     }
     
     // Input/Output operations
@@ -110,21 +115,51 @@ class PLCCore {
         if (!this.runMode) return;
         
         const startTime = Date.now();
+        const scanRecord = {
+            scanNumber: this.scanCount,
+            timestamp: startTime,
+            phases: { input: 0, logic: 0, output: 0 },
+            totalUs: 0,
+            rungResults: [],
+            inputSnapshot: [...this.inputs],
+            outputBefore: [...this.outputs],
+            outputAfter: null,
+            error: null,
+        };
         
         try {
-            // Read inputs
+            // Phase 1: Read inputs
+            const t0 = performance.now();
             this.readInputs();
+            const t1 = performance.now();
+            scanRecord.phases.input = (t1 - t0) * 1000; // microseconds
             
-            // Execute ladder logic
+            // Phase 2: Execute ladder logic (with per-rung timing)
+            this._currentRungResults = [];
             this.executeLadderLogic();
+            const t2 = performance.now();
+            scanRecord.phases.logic = (t2 - t1) * 1000;
+            scanRecord.rungResults = this._currentRungResults;
             
-            // Update outputs
+            // Phase 3: Update outputs
             this.updateOutputs();
+            const t3 = performance.now();
+            scanRecord.phases.output = (t3 - t2) * 1000;
+            
+            scanRecord.totalUs = (t3 - t0) * 1000;
+            scanRecord.outputAfter = [...this.outputs];
             
             this.scanCount++;
+            this.lastScanRecord = scanRecord;
+            this.scanHistory.push(scanRecord);
+            if (this.scanHistory.length > this.maxScanHistory) {
+                this.scanHistory.shift();
+            }
+            
             this.notifyScanComplete();
             
         } catch (error) {
+            scanRecord.error = error.message;
             this.errorState = true;
             this.runMode = false;
             console.error('PLC Scan Error:', error);
@@ -308,12 +343,15 @@ class LadderRung {
     }
     
     execute(plc) {
+        const rungStart = performance.now();
         let result = true;
+        const instrResults = [];
         
         for (let instruction of this.instructions) {
             if (instruction.type.startsWith('X')) {
                 // Input instruction - evaluate condition
                 const condition = instruction.execute(plc);
+                instrResults.push({ type: instruction.type, addr: instruction.operands[0], passed: condition });
                 result = result && condition;
             } else if (instruction.type.startsWith('O') || instruction.type.startsWith('T') || instruction.type.startsWith('C')) {
                 // Output instruction - energize or de-energize based on conditions
@@ -322,10 +360,27 @@ class LadderRung {
                 } else if (instruction.type === 'OTE') {
                     plc.setOutput(instruction.operands[0], false);
                 }
+                instrResults.push({ type: instruction.type, addr: instruction.operands[0], passed: result });
             }
         }
         
         this.energized = result;
+        const rungEnd = performance.now();
+        const rungUs = (rungEnd - rungStart) * 1000;
+
+        // Record to PLC scan if instrumented
+        if (plc._currentRungResults) {
+            const outputChanged = instrResults.some(i =>
+                (i.type === 'OTE' || i.type === 'OTL' || i.type === 'OTU') && i.passed !== undefined
+            );
+            plc._currentRungResults.push({
+                energized: result,
+                timeUs: rungUs,
+                instructions: instrResults,
+                outputChanged,
+            });
+        }
+
         return result;
     }
     

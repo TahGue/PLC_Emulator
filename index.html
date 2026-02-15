@@ -196,6 +196,33 @@
             </div>
         </section>
 
+        <!-- Scan Cycle Debugger -->
+        <section class="scan-section" id="scan-section">
+            <div class="scan-header">
+                <h2>🔬 Scan Cycle Debugger</h2>
+                <div class="scan-header-controls">
+                    <span class="scan-stat-badge" id="scan-rate-badge">0 scans/s</span>
+                    <span class="scan-stat-badge" id="scan-avg-badge">avg: —</span>
+                    <span class="scan-stat-badge" id="scan-max-badge">max: —</span>
+                    <button class="control-btn scan-pause-btn" id="scan-pause-btn">⏸ Pause</button>
+                    <button class="control-btn" id="scan-clear-btn">🗑 Clear</button>
+                </div>
+            </div>
+            <div class="scan-phase-row">
+                <canvas id="scan-phase-bar" class="scan-phase-canvas"></canvas>
+            </div>
+            <div class="scan-layout">
+                <div class="scan-timeline-panel">
+                    <h3>Scan Timeline</h3>
+                    <canvas id="scan-timeline-canvas" class="scan-timeline-canvas"></canvas>
+                </div>
+                <div class="scan-rung-panel">
+                    <h3>Rung Execution Detail</h3>
+                    <canvas id="scan-rung-canvas" class="scan-rung-canvas"></canvas>
+                </div>
+            </div>
+        </section>
+
         <!-- Attack Simulation Panel -->
         <section class="attack-section">
             <div class="attack-header">
@@ -310,6 +337,148 @@
             </div>
         </section>
 
+        <!-- Failure Injection Panel -->
+        <section class="failure-section" id="failure-section">
+            <div class="failure-header">
+                <h2>🔧 Failure Injection Engine</h2>
+                <div class="failure-header-controls">
+                    <span class="failure-status" id="failure-status">No failures active</span>
+                    <button id="failure-reset-btn" class="control-btn" title="Deactivate all failures">🛑 Reset All</button>
+                </div>
+            </div>
+            <div class="failure-layout">
+                <div class="failure-list-panel">
+                    <h3>Physical Failures</h3>
+                    <div class="failure-category-filter">
+                        <button class="failure-filter-btn active" data-filter="all">All</button>
+                        <button class="failure-filter-btn" data-filter="sensor">Sensor</button>
+                        <button class="failure-filter-btn" data-filter="actuator">Actuator</button>
+                        <button class="failure-filter-btn" data-filter="mechanical">Mechanical</button>
+                        <button class="failure-filter-btn" data-filter="process">Process</button>
+                        <button class="failure-filter-btn" data-filter="electrical">Electrical</button>
+                    </div>
+                    <div class="failure-list" id="failure-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+                <div class="failure-impact-panel">
+                    <h3>Live Impact Monitor</h3>
+                    <div class="failure-stats-row">
+                        <div class="failure-stat">
+                            <span class="failure-stat-label">Active</span>
+                            <span class="failure-stat-value" id="failure-active-count">0</span>
+                            <span class="failure-stat-unit">failures</span>
+                        </div>
+                        <div class="failure-stat">
+                            <span class="failure-stat-label">Impacts</span>
+                            <span class="failure-stat-value" id="failure-impact-count">0</span>
+                            <span class="failure-stat-unit">events</span>
+                        </div>
+                        <div class="failure-stat">
+                            <span class="failure-stat-label">Components</span>
+                            <span class="failure-stat-value" id="failure-comp-count">0</span>
+                            <span class="failure-stat-unit">affected</span>
+                        </div>
+                    </div>
+                    <div class="failure-impact-feed" id="failure-impact-feed">
+                        <div class="no-alarms">No failure impacts</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Station KPI Panel -->
+        <section class="station-section" id="station-section">
+            <div class="station-header">
+                <h2>🏭 Station Overview</h2>
+                <div class="station-header-controls">
+                    <span class="station-oee-badge" id="station-oee-badge">OEE: —</span>
+                    <span class="station-count-badge" id="station-count-badge">0 stations</span>
+                </div>
+            </div>
+            <div class="station-summary-row" id="station-summary-row">
+                <div class="station-summary-stat">
+                    <span class="station-summary-label">Running</span>
+                    <span class="station-summary-value" id="station-running-count">0</span>
+                </div>
+                <div class="station-summary-stat">
+                    <span class="station-summary-label">Idle</span>
+                    <span class="station-summary-value" id="station-idle-count">0</span>
+                </div>
+                <div class="station-summary-stat">
+                    <span class="station-summary-label">Faulted</span>
+                    <span class="station-summary-value station-fault-val" id="station-faulted-count">0</span>
+                </div>
+                <div class="station-summary-stat">
+                    <span class="station-summary-label">Cycles</span>
+                    <span class="station-summary-value" id="station-total-cycles">0</span>
+                </div>
+                <div class="station-summary-stat">
+                    <span class="station-summary-label">Availability</span>
+                    <span class="station-summary-value" id="station-availability">100%</span>
+                </div>
+                <div class="station-summary-stat">
+                    <span class="station-summary-label">Performance</span>
+                    <span class="station-summary-value" id="station-performance">100%</span>
+                </div>
+            </div>
+            <div class="station-cards" id="station-cards">
+                <!-- Populated by JS -->
+                <div class="no-alarms">Load a preset and start simulation to see stations</div>
+            </div>
+        </section>
+
+        <!-- Training Scenario Engine -->
+        <section class="training-section" id="training-section">
+            <div class="training-header">
+                <h2>🎓 Training Scenarios</h2>
+                <div class="training-header-controls">
+                    <span class="training-status-badge" id="training-status-badge">Select a scenario</span>
+                    <button class="control-btn" id="training-stop-btn" style="display:none">⏹ Stop</button>
+                </div>
+            </div>
+
+            <!-- Scenario Selector -->
+            <div class="training-selector" id="training-selector">
+                <div class="training-category-filter">
+                    <button class="training-filter-btn active" data-filter="all">All</button>
+                    <button class="training-filter-btn" data-filter="ladder">Ladder</button>
+                    <button class="training-filter-btn" data-filter="failure">Failure</button>
+                    <button class="training-filter-btn" data-filter="cyber">Cyber</button>
+                    <button class="training-filter-btn" data-filter="timing">Timing</button>
+                    <button class="training-filter-btn" data-filter="combined">Combined</button>
+                </div>
+                <div class="training-scenario-list" id="training-scenario-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Live Scoring Overlay (shown during active scenario) -->
+            <div class="training-overlay" id="training-overlay" style="display:none">
+                <div class="training-overlay-header">
+                    <span class="training-scenario-title" id="training-active-title"></span>
+                    <span class="training-timer" id="training-timer">0:00</span>
+                </div>
+                <div class="training-objectives" id="training-objectives">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="training-overlay-controls">
+                    <button class="control-btn training-hint-btn" id="training-hint-btn">💡 Hint</button>
+                    <span class="training-hint-count" id="training-hint-count"></span>
+                </div>
+                <div class="training-hint-display" id="training-hint-display" style="display:none"></div>
+            </div>
+
+            <!-- Completion Summary (shown after scenario ends) -->
+            <div class="training-summary" id="training-summary" style="display:none">
+                <div class="training-summary-header" id="training-summary-header"></div>
+                <div class="training-summary-score" id="training-summary-score"></div>
+                <div class="training-summary-objectives" id="training-summary-objectives"></div>
+                <div class="training-summary-details" id="training-summary-details"></div>
+                <button class="control-btn" id="training-back-btn">← Back to Scenarios</button>
+            </div>
+        </section>
+
         <!-- ML Anomaly Detection Panel -->
         <section class="anomaly-section" id="anomaly-section">
             <div class="anomaly-header">
@@ -412,6 +581,10 @@
     <script src="ladder-logic.js"></script>
     <script src="telemetry-client.js"></script>
     <script src="attack-simulator.js"></script>
+    <script src="failure-engine.js"></script>
+    <script src="station-manager.js"></script>
+    <script src="scan-debugger.js"></script>
+    <script src="training-engine.js"></script>
     <script src="app.js"></script>
 </body>
 
