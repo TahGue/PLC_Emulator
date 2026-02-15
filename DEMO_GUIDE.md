@@ -2,6 +2,8 @@
 
 Step-by-step walkthrough for the PLC Factory Emulator — layout editor, attack simulation, LSTM anomaly detection, ladder logic, and real-time monitoring.
 
+> **See it in action:** Check out the [Visual Walkthrough & Features Guide](docs/VISUAL_WALKTHROUGH.md) for screenshots of every major component.
+
 ---
 
 ## Quick Start (no backend required)

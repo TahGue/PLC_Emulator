@@ -40,6 +40,9 @@ Expected outcome in under 5 minutes:
 
 For a full click-by-click walkthrough, see `DEMO_GUIDE.md`.
 
+## 📸 Visual Tour
+Check out the [Visual Walkthrough & Features Guide](docs/VISUAL_WALKTHROUGH.md) to see the emulator in action with screenshots of every major component.
+
 ## Features
 
 ### 🏭 Visual Layout Editor
