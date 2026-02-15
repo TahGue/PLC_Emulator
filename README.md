@@ -15,6 +15,31 @@ A complete, local, PC-based PLC factory emulator with:
 
 All libraries used are free and open source.
 
+## ⚡ 5-Minute Quick Start
+
+Use this path if you just want to see the emulator in action immediately.
+
+1. **Serve the frontend**
+
+   ```bash
+   python3 -m http.server 8000
+   ```
+
+2. Open `http://localhost:8000/index.html`
+3. Click **Simulate** → **START**
+4. In **Failure Injection**, enable **Sensor Drift**
+5. In **Attack Simulation Lab**, enable **DoS / Packet Flood**
+6. Open **Scan Cycle Debugger** and observe scan-time changes
+7. Open **Training Scenarios** and start **DoS Flood Attack**
+
+Expected outcome in under 5 minutes:
+- Live I/O changes in the I/O panel
+- Station KPIs and alarms updating
+- Scan timing and rung execution bars moving
+- Training scenario objectives/hints/score active
+
+For a full click-by-click walkthrough, see `DEMO_GUIDE.md`.
+
 ## Features
 
 ### 🏭 Visual Layout Editor
@@ -293,6 +318,12 @@ PLC_Emulator/
 ├── README.md
 ├── notebooks/
 │   └── lstm_anomaly_detection.ipynb  # Full ML pipeline notebook (train + eval + viz)
+├── docs/
+│   ├── ladder-examples/
+│   │   └── basic-bottle-line.md      # Canonical ladder example + expected I/O trace
+│   └── use-cases/
+│       ├── ics-training-lab.md       # Instructor-friendly ICS training lab flow
+│       └── pentest-playbook.md       # Safe pentest simulation checklist
 └── backend/
     ├── Dockerfile
     ├── requirements.txt
@@ -377,6 +408,12 @@ python backend/scripts/network_attack_injector.py --target-host 127.0.0.1 --targ
 # Validate E2E scenarios
 python backend/scripts/e2e_scenario_validator.py --api-base-url http://localhost:8001 --report-json backend/logs/e2e_scenario_report.json
 ```
+
+## Real Use Cases
+
+- **ICS training workshop**: `docs/use-cases/ics-training-lab.md`
+- **Pentest simulation playbook**: `docs/use-cases/pentest-playbook.md`
+- **Canonical ladder reference**: `docs/ladder-examples/basic-bottle-line.md`
 
 ## Attack Simulation Guide
 

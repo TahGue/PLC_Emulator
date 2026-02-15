@@ -223,6 +223,16 @@ python -m http.server 8090 --directory backend/dashboard
 
 ---
 
+## Real-World Tracks
+
+- **Instructor-led ICS class**: `docs/use-cases/ics-training-lab.md`
+- **Pentest simulation workflow**: `docs/use-cases/pentest-playbook.md`
+- **Canonical ladder reference**: `docs/ladder-examples/basic-bottle-line.md`
+
+Use these as repeatable runbooks for workshops, assessments, and regression drills.
+
+---
+
 ## Run Tests
 
 ```bash
