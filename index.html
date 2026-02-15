@@ -127,6 +127,33 @@
                     <button id="edit-ladder-btn" class="control-btn">Edit Logic</button>
                     <button id="run-scan-btn" class="control-btn">Run Scan</button>
                 </div>
+                <div id="ladder-editor-panel" class="ladder-editor-panel" style="display:none">
+                    <div class="ladder-editor-row">
+                        <label for="ladder-rung-select">Rung</label>
+                        <select id="ladder-rung-select"></select>
+                        <button id="ladder-add-rung-btn" class="control-btn">+ Rung</button>
+                        <button id="ladder-delete-rung-btn" class="control-btn">- Rung</button>
+                    </div>
+                    <div class="ladder-editor-row">
+                        <label for="ladder-inst-select">Instruction</label>
+                        <select id="ladder-inst-select"></select>
+                        <label for="ladder-inst-type">Type</label>
+                        <select id="ladder-inst-type"></select>
+                    </div>
+                    <div class="ladder-editor-row">
+                        <label for="ladder-op-a">Operand A</label>
+                        <input id="ladder-op-a" type="text" placeholder="I:0/1 or T:1" />
+                        <label for="ladder-op-b">Operand B</label>
+                        <input id="ladder-op-b" type="number" placeholder="Preset" min="1" step="1" />
+                    </div>
+                    <div class="ladder-editor-row ladder-editor-actions">
+                        <button id="ladder-add-inst-btn" class="control-btn">Add Inst</button>
+                        <button id="ladder-update-inst-btn" class="control-btn">Update Inst</button>
+                        <button id="ladder-delete-inst-btn" class="control-btn">Delete Inst</button>
+                    </div>
+                    <pre id="ladder-editor-summary" class="ladder-editor-summary"></pre>
+                    <div id="ladder-editor-msg" class="ladder-editor-msg">Editor ready.</div>
+                </div>
             </section>
 
             <!-- I/O Status -->

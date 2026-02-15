@@ -435,6 +435,72 @@ h2 {
 
 .ladder-controls { display: flex; gap: 8px; justify-content: center; }
 
+.ladder-editor-panel {
+    margin-top: 12px;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px;
+    background: rgba(15, 23, 42, 0.6);
+}
+
+.ladder-editor-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.ladder-editor-row label {
+    font-size: 0.75rem;
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.ladder-editor-row select,
+.ladder-editor-row input {
+    min-width: 0;
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 0.78rem;
+}
+
+.ladder-editor-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ladder-editor-actions .control-btn {
+    width: 100%;
+}
+
+.ladder-editor-summary {
+    margin: 8px 0;
+    max-height: 140px;
+    overflow: auto;
+    background: #020617;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    color: #cbd5e1;
+}
+
+.ladder-editor-msg {
+    font-size: 0.75rem;
+    color: #93c5fd;
+    min-height: 18px;
+}
+
+.ladder-editor-msg.error {
+    color: #fca5a5;
+}
+
 /* ── I/O Status ────────────────────────────────────────────── */
 .io-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
@@ -1011,6 +1077,8 @@ h2 {
     .attack-layout { grid-template-columns: 1fr; }
     .attack-list { grid-template-columns: 1fr; }
     .packet-stats-row { grid-template-columns: repeat(2, 1fr); }
+    .ladder-editor-row { grid-template-columns: 1fr; }
+    .ladder-editor-actions { grid-template-columns: 1fr; }
 }
 
 /* ── Failure Injection Engine ─────────────────────────────── */

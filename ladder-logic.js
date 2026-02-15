@@ -356,28 +356,189 @@ class LadderLogicRenderer {
 class LadderLogicEditor {
     constructor(renderer) {
         this.renderer = renderer;
+        this.program = null;
         this.editMode = false;
         this.selectedInstruction = null;
         this.currentRung = 0;
+        this.supportedInstructions = {
+            XIC: 1,
+            XIO: 1,
+            OTE: 1,
+            OTL: 1,
+            OTU: 1,
+            TON: 2,
+            CTU: 2,
+        };
+    }
+
+    setProgram(program) {
+        this.program = program;
+    }
+
+    getInstructionTypes() {
+        return Object.keys(this.supportedInstructions);
+    }
+
+    getRungs() {
+        return this.program?.rungs || [];
+    }
+
+    _ensureProgram() {
+        if (!this.program) {
+            return { ok: false, error: 'No ladder program loaded.' };
+        }
+        return { ok: true };
+    }
+
+    _normalizeType(instructionType) {
+        return String(instructionType || '').trim().toUpperCase();
+    }
+
+    _coerceRungIndex(rungIndex) {
+        const idx = Number(rungIndex);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= this.getRungs().length) {
+            return -1;
+        }
+        return idx;
+    }
+
+    _coerceInstructionIndex(rung, instructionIndex) {
+        const idx = Number(instructionIndex);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= rung.instructions.length) {
+            return -1;
+        }
+        return idx;
+    }
+
+    _buildInstruction(instructionType, operandA, operandB) {
+        const type = this._normalizeType(instructionType);
+        const operandCount = this.supportedInstructions[type];
+        if (!operandCount) {
+            return { ok: false, error: `Unsupported instruction type: ${type || 'EMPTY'}` };
+        }
+
+        const opA = String(operandA || '').trim();
+        if (!opA) {
+            return { ok: false, error: 'Operand A is required.' };
+        }
+
+        const operands = [opA];
+        if (operandCount === 2) {
+            const preset = Number(operandB);
+            if (!Number.isFinite(preset) || preset <= 0) {
+                return { ok: false, error: 'Operand B must be a positive number.' };
+            }
+            operands.push(preset);
+        }
+
+        return {
+            ok: true,
+            instruction: new LadderInstruction(type, operands)
+        };
     }
     
     toggleEditMode() {
         this.editMode = !this.editMode;
         return this.editMode;
     }
+
+    addRung(insertAfterIndex = null) {
+        const ready = this._ensureProgram();
+        if (!ready.ok) return ready;
+
+        const rung = new LadderRung([
+            new LadderInstruction('XIC', ['I:0/1']),
+            new LadderInstruction('OTE', ['O:0/0'])
+        ]);
+
+        if (this.program.rungs.length === 0) {
+            this.program.rungs.push(rung);
+            return { ok: true, rungIndex: 0 };
+        }
+
+        if (insertAfterIndex === null || insertAfterIndex === undefined) {
+            this.program.rungs.push(rung);
+            return { ok: true, rungIndex: this.program.rungs.length - 1 };
+        }
+
+        const at = Number(insertAfterIndex);
+        if (!Number.isInteger(at) || at < -1 || at >= this.program.rungs.length) {
+            return { ok: false, error: 'Invalid rung insertion index.' };
+        }
+
+        const insertAt = at + 1;
+        this.program.rungs.splice(insertAt, 0, rung);
+        return { ok: true, rungIndex: insertAt };
+    }
+
+    removeRung(rungIndex) {
+        const ready = this._ensureProgram();
+        if (!ready.ok) return ready;
+
+        const idx = this._coerceRungIndex(rungIndex);
+        if (idx < 0) {
+            return { ok: false, error: 'Invalid rung index.' };
+        }
+
+        this.program.rungs.splice(idx, 1);
+        return { ok: true, rungIndex: Math.max(0, idx - 1) };
+    }
     
-    addInstruction(rungIndex, instructionType, operand) {
-        // This would modify the ladder program
-        console.log(`Adding ${instructionType} with operand ${operand} to rung ${rungIndex}`);
+    addInstruction(rungIndex, instructionType, operandA, operandB = '') {
+        const ready = this._ensureProgram();
+        if (!ready.ok) return ready;
+
+        const idx = this._coerceRungIndex(rungIndex);
+        if (idx < 0) {
+            return { ok: false, error: 'Invalid rung index.' };
+        }
+
+        const built = this._buildInstruction(instructionType, operandA, operandB);
+        if (!built.ok) return built;
+
+        const rung = this.program.rungs[idx];
+        rung.instructions.push(built.instruction);
+        return { ok: true, rungIndex: idx, instructionIndex: rung.instructions.length - 1 };
     }
     
     removeInstruction(rungIndex, instructionIndex) {
-        // This would remove an instruction from the ladder program
-        console.log(`Removing instruction ${instructionIndex} from rung ${rungIndex}`);
+        const ready = this._ensureProgram();
+        if (!ready.ok) return ready;
+
+        const idx = this._coerceRungIndex(rungIndex);
+        if (idx < 0) {
+            return { ok: false, error: 'Invalid rung index.' };
+        }
+
+        const rung = this.program.rungs[idx];
+        const instIdx = this._coerceInstructionIndex(rung, instructionIndex);
+        if (instIdx < 0) {
+            return { ok: false, error: 'Invalid instruction index.' };
+        }
+
+        rung.instructions.splice(instIdx, 1);
+        return { ok: true, rungIndex: idx, instructionIndex: Math.max(0, instIdx - 1) };
     }
     
-    editInstruction(rungIndex, instructionIndex, newOperand) {
-        // This would edit an existing instruction
-        console.log(`Editing instruction ${instructionIndex} in rung ${rungIndex} to ${newOperand}`);
+    editInstruction(rungIndex, instructionIndex, instructionType, operandA, operandB = '') {
+        const ready = this._ensureProgram();
+        if (!ready.ok) return ready;
+
+        const idx = this._coerceRungIndex(rungIndex);
+        if (idx < 0) {
+            return { ok: false, error: 'Invalid rung index.' };
+        }
+
+        const rung = this.program.rungs[idx];
+        const instIdx = this._coerceInstructionIndex(rung, instructionIndex);
+        if (instIdx < 0) {
+            return { ok: false, error: 'Invalid instruction index.' };
+        }
+
+        const built = this._buildInstruction(instructionType, operandA, operandB);
+        if (!built.ok) return built;
+
+        rung.instructions[instIdx] = built.instruction;
+        return { ok: true, rungIndex: idx, instructionIndex: instIdx };
     }
 }

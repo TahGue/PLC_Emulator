@@ -13,6 +13,8 @@ class PLCEmulatorApp {
             this.plc = new PLCCore();
             this.ladderRenderer = new LadderLogicRenderer('ladder-canvas');
             this.ladderProgram = new LadderProgram();
+            this.ladderEditor = new LadderLogicEditor(this.ladderRenderer);
+            this.ladderEditor.setProgram(this.ladderProgram);
             this.alarms = new AlarmManager();
             this.telemetry = new TelemetryClient();
             this.attackSim = new AttackSimulator();
@@ -204,9 +206,229 @@ class PLCEmulatorApp {
         // Ladder controls
         document.getElementById('edit-ladder-btn').addEventListener('click', () => this.toggleLadderEditor());
         document.getElementById('run-scan-btn').addEventListener('click', () => this.runSingleScan());
+        this.initLadderEditorBindings();
 
         // ML controls
         this.initMLShowcaseControls();
+    }
+
+    initLadderEditorBindings() {
+        const typeSelect = document.getElementById('ladder-inst-type');
+        if (!typeSelect) return;
+
+        const instTypes = this.ladderEditor.getInstructionTypes();
+        typeSelect.innerHTML = instTypes.map(t => `<option value="${t}">${t}</option>`).join('');
+
+        const rungSelect = document.getElementById('ladder-rung-select');
+        const instSelect = document.getElementById('ladder-inst-select');
+        const addRungBtn = document.getElementById('ladder-add-rung-btn');
+        const deleteRungBtn = document.getElementById('ladder-delete-rung-btn');
+        const addInstBtn = document.getElementById('ladder-add-inst-btn');
+        const updateInstBtn = document.getElementById('ladder-update-inst-btn');
+        const deleteInstBtn = document.getElementById('ladder-delete-inst-btn');
+
+        if (rungSelect) {
+            rungSelect.addEventListener('change', () => {
+                this.refreshLadderEditorPanel(Number(rungSelect.value), 0);
+            });
+        }
+
+        if (instSelect) {
+            instSelect.addEventListener('change', () => {
+                this.refreshLadderEditorPanel(this.getSelectedRungIndex(), Number(instSelect.value));
+            });
+        }
+
+        typeSelect.addEventListener('change', () => this.updateLadderOperandBState());
+
+        if (addRungBtn) {
+            addRungBtn.addEventListener('click', () => {
+                const result = this.ladderEditor.addRung(this.getSelectedRungIndex());
+                this.applyLadderEditResult(result, 'Rung added.');
+            });
+        }
+
+        if (deleteRungBtn) {
+            deleteRungBtn.addEventListener('click', () => {
+                const result = this.ladderEditor.removeRung(this.getSelectedRungIndex());
+                this.applyLadderEditResult(result, 'Rung removed.');
+            });
+        }
+
+        if (addInstBtn) {
+            addInstBtn.addEventListener('click', () => {
+                const result = this.ladderEditor.addInstruction(
+                    this.getSelectedRungIndex(),
+                    this.getSelectedInstructionType(),
+                    this.getOperandA(),
+                    this.getOperandB()
+                );
+                this.applyLadderEditResult(result, 'Instruction added.');
+            });
+        }
+
+        if (updateInstBtn) {
+            updateInstBtn.addEventListener('click', () => {
+                const result = this.ladderEditor.editInstruction(
+                    this.getSelectedRungIndex(),
+                    this.getSelectedInstructionIndex(),
+                    this.getSelectedInstructionType(),
+                    this.getOperandA(),
+                    this.getOperandB()
+                );
+                this.applyLadderEditResult(result, 'Instruction updated.');
+            });
+        }
+
+        if (deleteInstBtn) {
+            deleteInstBtn.addEventListener('click', () => {
+                const result = this.ladderEditor.removeInstruction(
+                    this.getSelectedRungIndex(),
+                    this.getSelectedInstructionIndex()
+                );
+                this.applyLadderEditResult(result, 'Instruction removed.');
+            });
+        }
+
+        this.refreshLadderEditorPanel(0, 0);
+        this.setLadderEditorMessage('Editor ready.');
+    }
+
+    setActiveLadderProgram(program) {
+        this.ladderProgram = program;
+        this.plc.setLadderProgram(program);
+        this.ladderEditor.setProgram(program);
+        this.refreshLadderEditorPanel();
+        this.ladderRenderer.render(this.ladderProgram, this.plc.getIOState());
+    }
+
+    getSelectedRungIndex() {
+        const el = document.getElementById('ladder-rung-select');
+        return el ? Number(el.value || 0) : 0;
+    }
+
+    getSelectedInstructionIndex() {
+        const el = document.getElementById('ladder-inst-select');
+        return el ? Number(el.value || 0) : 0;
+    }
+
+    getSelectedInstructionType() {
+        const el = document.getElementById('ladder-inst-type');
+        return el ? String(el.value || 'XIC') : 'XIC';
+    }
+
+    getOperandA() {
+        const el = document.getElementById('ladder-op-a');
+        return el ? String(el.value || '').trim() : '';
+    }
+
+    getOperandB() {
+        const el = document.getElementById('ladder-op-b');
+        return el ? String(el.value || '').trim() : '';
+    }
+
+    requiresSecondOperand(type) {
+        return type === 'TON' || type === 'CTU';
+    }
+
+    updateLadderOperandBState() {
+        const type = this.getSelectedInstructionType();
+        const opB = document.getElementById('ladder-op-b');
+        if (!opB) return;
+        const needs = this.requiresSecondOperand(type);
+        opB.disabled = !needs;
+        opB.placeholder = needs ? 'Preset' : 'N/A';
+        if (!needs) opB.value = '';
+    }
+
+    setLadderEditorMessage(message, isError = false) {
+        const msg = document.getElementById('ladder-editor-msg');
+        if (!msg) return;
+        msg.textContent = message;
+        msg.classList.toggle('error', Boolean(isError));
+    }
+
+    refreshLadderEditorPanel(preferredRung = null, preferredInstruction = null) {
+        const rungSelect = document.getElementById('ladder-rung-select');
+        const instSelect = document.getElementById('ladder-inst-select');
+        const typeSelect = document.getElementById('ladder-inst-type');
+        const opA = document.getElementById('ladder-op-a');
+        const opB = document.getElementById('ladder-op-b');
+        const summary = document.getElementById('ladder-editor-summary');
+        if (!rungSelect || !instSelect || !typeSelect || !opA || !opB || !summary) return;
+
+        const rungs = this.ladderEditor.getRungs();
+        if (rungs.length === 0) {
+            rungSelect.innerHTML = '';
+            instSelect.innerHTML = '';
+            opA.value = '';
+            opB.value = '';
+            summary.textContent = '(No rungs in ladder program)';
+            this.updateLadderOperandBState();
+            return;
+        }
+
+        const rungIndex = Number.isInteger(preferredRung)
+            ? Math.max(0, Math.min(preferredRung, rungs.length - 1))
+            : Math.max(0, Math.min(this.getSelectedRungIndex(), rungs.length - 1));
+
+        rungSelect.innerHTML = rungs.map((r, i) => {
+            const label = r.comment ? `R${i + 1} - ${r.comment}` : `R${i + 1}`;
+            return `<option value="${i}">${label}</option>`;
+        }).join('');
+        rungSelect.value = String(rungIndex);
+
+        const rung = rungs[rungIndex];
+        const instructions = rung.instructions || [];
+        instSelect.innerHTML = instructions.map((inst, i) => {
+            const operands = (inst.operands || []).join(', ');
+            return `<option value="${i}">${i + 1}. ${inst.type} ${operands}</option>`;
+        }).join('');
+
+        if (instructions.length === 0) {
+            instSelect.innerHTML = '<option value="">(No instructions)</option>';
+            opA.value = '';
+            opB.value = '';
+            summary.textContent = this.buildLadderSummary();
+            this.updateLadderOperandBState();
+            return;
+        }
+
+        const instructionIndex = Number.isInteger(preferredInstruction)
+            ? Math.max(0, Math.min(preferredInstruction, instructions.length - 1))
+            : Math.max(0, Math.min(this.getSelectedInstructionIndex(), instructions.length - 1));
+        instSelect.value = String(instructionIndex);
+
+        const inst = instructions[instructionIndex];
+        typeSelect.value = inst.type;
+        opA.value = inst.operands?.[0] ?? '';
+        opB.value = inst.operands?.[1] ?? '';
+        summary.textContent = this.buildLadderSummary();
+        this.updateLadderOperandBState();
+    }
+
+    buildLadderSummary() {
+        const rungs = this.ladderEditor.getRungs();
+        if (!rungs.length) return '(No rungs in ladder program)';
+        return rungs.map((rung, rIdx) => {
+            const body = (rung.instructions || []).map((inst, iIdx) => {
+                const ops = (inst.operands || []).join(', ');
+                return `  [${iIdx}] ${inst.type} ${ops}`.trimEnd();
+            }).join('\n');
+            return `R${rIdx + 1}${rung.comment ? ` (${rung.comment})` : ''}\n${body || '  (empty rung)'}`;
+        }).join('\n\n');
+    }
+
+    applyLadderEditResult(result, successMessage) {
+        if (!result || !result.ok) {
+            this.setLadderEditorMessage(result?.error || 'Ladder edit failed.', true);
+            return;
+        }
+
+        this.plc.setLadderProgram(this.ladderProgram);
+        this.refreshLadderEditorPanel(result.rungIndex, result.instructionIndex);
+        this.ladderRenderer.render(this.ladderProgram, this.plc.getIOState());
+        this.setLadderEditorMessage(successMessage, false);
     }
 
     initMLShowcaseControls() {
@@ -1818,22 +2040,27 @@ class PLCEmulatorApp {
             generatedOutputs.add(act.address);
         }
 
-        this.ladderProgram = program;
-        this.plc.setLadderProgram(program);
-        this.ladderRenderer.render(this.ladderProgram, this.plc.getIOState());
+        this.setActiveLadderProgram(program);
         console.log('[PLC] Ladder synced:', program.rungs.length, 'rungs from', sensors.length, 'sensors +', actuators.length, 'actuators');
     }
 
     toggleLadderEditor() {
         const btn = document.getElementById('edit-ladder-btn');
-        const isEdit = btn.textContent === 'Edit Logic';
+        const panel = document.getElementById('ladder-editor-panel');
+        const isEdit = this.ladderEditor.toggleEditMode();
         btn.textContent = isEdit ? 'Save Logic' : 'Edit Logic';
+        if (panel) panel.style.display = isEdit ? '' : 'none';
+        if (isEdit) {
+            this.refreshLadderEditorPanel();
+            this.setLadderEditorMessage('Edit mode enabled.');
+        }
     }
 
     runSingleScan() {
         this.plc.executeLadderLogic();
         this.updateIODisplayValues();
         this.ladderRenderer.render(this.ladderProgram, this.plc.getIOState());
+        if (this.ladderEditor.editMode) this.refreshLadderEditorPanel();
         const btn = document.getElementById('run-scan-btn');
         btn.style.background = '#16a34a';
         setTimeout(() => { btn.style.background = ''; }, 200);
@@ -1866,8 +2093,7 @@ class PLCEmulatorApp {
                     program.addRung(rung);
                 });
 
-                this.ladderProgram = program; // Store the program
-                this.plc.setLadderProgram(program);
+                this.setActiveLadderProgram(program);
             } else {
                 console.log('[PLC] No custom ladder found, syncing from layout...');
                 this.syncLadderFromLayout();
