@@ -1917,24 +1917,39 @@ class PLCEmulatorApp {
 
     // ── Ladder Logic ─────────────────────────────────────────────
     syncLadderFromLayout() {
-        // Auto-generate ladder program from the layout's component I/O addresses and wires
+        // Auto-generate ladder program from component addresses and wire topology.
         const program = new LadderProgram();
-        program.rungs = []; // clear default
+        program.rungs = [];
 
         const allComps = this.engine.getAllComponents();
         const allWires = this.engine.getAllWires();
+        const compById = new Map(allComps.map(c => [c.id, c]));
 
-        // Collect sensor (input) and actuator (output) addresses
-        const sensors = [];  // { compId, address, label, type }
-        const actuators = []; // { compId, address, label, type }
+        const incomingByComp = new Map();
+        const outgoingByComp = new Map();
+        for (const wire of allWires) {
+            if (!incomingByComp.has(wire.toComp)) incomingByComp.set(wire.toComp, []);
+            if (!outgoingByComp.has(wire.fromComp)) outgoingByComp.set(wire.fromComp, []);
+            incomingByComp.get(wire.toComp).push(wire);
+            outgoingByComp.get(wire.fromComp).push(wire);
+        }
+
+        const sensors = [];
+        const actuators = [];
+        const logicBlocks = [];
 
         for (const comp of allComps) {
             const def = this.registry.get(comp.type);
             if (!def) continue;
-            const addr = comp.props.address;
-            if (!addr) continue;
-            const label = comp.props.label || comp.type;
 
+            const addr = String(comp.props?.address || '').trim();
+            const label = comp.props?.label || comp.type;
+
+            if (def.category === 'logic') {
+                logicBlocks.push({ comp, def });
+            }
+
+            if (!addr) continue;
             if (def.category === 'sensors') {
                 sensors.push({ compId: comp.id, address: addr, label, type: comp.type });
             } else if (def.category === 'actuators' || def.category === 'indicators') {
@@ -1942,39 +1957,88 @@ class PLCEmulatorApp {
             }
         }
 
-        // Build a wire map: which sensor compId connects to which actuator compId
-        const sensorToActuator = new Map(); // sensorCompId -> Set<actuatorCompId>
-        for (const wire of allWires) {
-            const fromComp = this.engine.components.get(wire.fromComp);
-            const toComp = this.engine.components.get(wire.toComp);
-            if (!fromComp || !toComp) continue;
+        const dedupe = (values) => [...new Set(values.filter(Boolean))];
+        const isOutputDef = (def) => def && (def.category === 'actuators' || def.category === 'indicators');
+        const sanitizeTag = (value) => String(value || '').replace(/[^A-Za-z0-9_]/g, '_');
+        const getTonTag = (comp) => {
+            const raw = String(comp?.props?.address || '').trim();
+            return raw.startsWith('T:') ? raw.split('/')[0] : `T:${sanitizeTag(comp?.id)}`;
+        };
+        const getCtuTag = (comp) => {
+            const raw = String(comp?.props?.address || '').trim();
+            return raw.startsWith('C:') ? raw.split('/')[0] : `C:${sanitizeTag(comp?.id)}`;
+        };
 
-            const fromDef = this.registry.get(fromComp.type);
-            const toDef = this.registry.get(toComp.type);
-            if (!fromDef || !toDef) continue;
+        const resolveSignalAddresses = (compId, outputPort = null, visited = new Set()) => {
+            if (visited.has(compId)) return [];
+            const nextVisited = new Set(visited);
+            nextVisited.add(compId);
 
-            // Direct sensor -> actuator wiring
-            if (fromDef.category === 'sensors' && (toDef.category === 'actuators' || toDef.category === 'indicators')) {
-                if (!sensorToActuator.has(wire.fromComp)) sensorToActuator.set(wire.fromComp, new Set());
-                sensorToActuator.get(wire.fromComp).add(wire.toComp);
+            const comp = compById.get(compId);
+            if (!comp) return [];
+
+            const def = this.registry.get(comp.type);
+            if (!def) return [];
+
+            if (def.type === 'timer_ton' && outputPort === 'done') {
+                return [`${getTonTag(comp)}/DN`];
             }
-            // Also handle sensor -> logic -> actuator chains
-            if (fromDef.category === 'sensors' && toDef.category === 'logic') {
-                // Find what the logic gate outputs to
-                for (const w2 of allWires) {
-                    if (w2.fromComp === wire.toComp) {
-                        const outComp = this.engine.components.get(w2.toComp);
-                        if (outComp) {
-                            const outDef = this.registry.get(outComp.type);
-                            if (outDef && (outDef.category === 'actuators' || outDef.category === 'indicators')) {
-                                if (!sensorToActuator.has(wire.fromComp)) sensorToActuator.set(wire.fromComp, new Set());
-                                sensorToActuator.get(wire.fromComp).add(w2.toComp);
-                            }
-                        }
-                    }
+            if (def.type === 'counter_ctu' && outputPort === 'done') {
+                return [`${getCtuTag(comp)}/DN`];
+            }
+
+            const addr = String(comp.props?.address || '').trim();
+            if (addr && def.category !== 'logic') return [addr];
+
+            const incoming = incomingByComp.get(compId) || [];
+            let relevantIncoming = incoming;
+
+            if (def.category === 'logic') {
+                if (def.type === 'timer_ton') {
+                    relevantIncoming = incoming.filter(w => w.toPort === 'enable');
+                } else if (def.type === 'counter_ctu') {
+                    relevantIncoming = incoming.filter(w => w.toPort === 'count');
+                } else if (def.type === 'not_gate') {
+                    relevantIncoming = incoming.filter(w => w.toPort === 'a');
+                } else if (def.type === 'and_gate' || def.type === 'or_gate') {
+                    relevantIncoming = incoming.filter(w => w.toPort === 'a' || w.toPort === 'b');
+                } else if (def.type === 'sr_latch') {
+                    relevantIncoming = incoming.filter(w => w.toPort === 'set' || w.toPort === 'reset');
                 }
             }
-        }
+
+            const addresses = [];
+            for (const wire of relevantIncoming) {
+                addresses.push(...resolveSignalAddresses(wire.fromComp, wire.fromPort, nextVisited));
+            }
+
+            // NOTE: OR branches collapse into series contacts in this simplified synthesis.
+            return dedupe(addresses);
+        };
+
+        const buildConditionInstructions = (addresses) => {
+            if (!addresses || !addresses.length) {
+                return [new LadderInstruction('XIO', ['I:0/0'])];
+            }
+            return addresses.map(addr => new LadderInstruction('XIC', [addr]));
+        };
+
+        const generatedOutputs = new Set();
+        const markGenerated = (address) => {
+            if (address) generatedOutputs.add(address);
+        };
+
+        const addOutputRung = (conditionAddresses, outputAddress, comment) => {
+            if (!outputAddress || generatedOutputs.has(outputAddress)) return false;
+            const rung = new LadderRung([
+                ...buildConditionInstructions(dedupe(conditionAddresses)),
+                new LadderInstruction('OTE', [outputAddress])
+            ]);
+            if (comment) rung.comment = comment;
+            program.addRung(rung);
+            markGenerated(outputAddress);
+            return true;
+        };
 
         // Rung 0: Security lockout
         program.addRung(new LadderRung([
@@ -1982,66 +2046,107 @@ class PLCEmulatorApp {
             new LadderInstruction('OTE', ['O:0/8'])
         ]));
         program.rungs[0].comment = 'Security Lockout (AI anomaly OR network alert)';
+        markGenerated('O:0/8');
 
-        // Generate rungs from wired sensor->actuator pairs
-        const generatedOutputs = new Set();
-        for (const [sensorCompId, actuatorSet] of sensorToActuator) {
-            const sensorComp = allComps.find(c => c.id === sensorCompId);
-            if (!sensorComp || !sensorComp.props.address) continue;
+        // Synthesize explicit timer/counter behavior from logic blocks.
+        for (const { comp, def } of logicBlocks) {
+            const outgoing = outgoingByComp.get(comp.id) || [];
+            const hasDoneOutput = outgoing.some(w => w.fromPort === 'done');
+            const outTargets = outgoing
+                .filter(w => w.fromPort === 'done')
+                .map(w => {
+                    const targetComp = compById.get(w.toComp);
+                    const targetDef = targetComp ? this.registry.get(targetComp.type) : null;
+                    const targetAddr = String(targetComp?.props?.address || '').trim();
+                    if (!targetComp || !isOutputDef(targetDef) || !targetAddr) return null;
+                    return { comp: targetComp, address: targetAddr, def: targetDef };
+                })
+                .filter(Boolean);
 
-            for (const actCompId of actuatorSet) {
-                const actComp = allComps.find(c => c.id === actCompId);
-                if (!actComp || !actComp.props.address) continue;
-                if (generatedOutputs.has(actComp.props.address)) continue;
+            if (def.type === 'timer_ton') {
+                if (!hasDoneOutput) continue;
+                const tonTag = getTonTag(comp);
+                const preset = Number(comp.props?.preset);
+                const tonPreset = Number.isFinite(preset) && preset > 0 ? preset : 1000;
+                const tonEnableConditions = resolveSignalAddresses(comp.id, 'enable');
+                const timerRung = new LadderRung([
+                    ...buildConditionInstructions(tonEnableConditions),
+                    new LadderInstruction('TON', [tonTag, tonPreset])
+                ]);
+                timerRung.comment = `${comp.props?.label || comp.type} TON (${tonPreset} ms)`;
+                program.addRung(timerRung);
 
-                const instructions = [
-                    new LadderInstruction('XIC', [sensorComp.props.address])
-                ];
-
-                // Check if multiple sensors feed same actuator
-                for (const [otherSensor, otherActSet] of sensorToActuator) {
-                    if (otherSensor === sensorCompId) continue;
-                    if (!otherActSet.has(actCompId)) continue;
-                    const otherComp = allComps.find(c => c.id === otherSensor);
-                    if (otherComp && otherComp.props.address) {
-                        instructions.push(new LadderInstruction('XIC', [otherComp.props.address]));
-                    }
+                for (const target of outTargets) {
+                    addOutputRung(
+                        [`${tonTag}/DN`],
+                        target.address,
+                        `${comp.props?.label || comp.type} DN -> ${target.comp.props?.label || target.comp.type}`
+                    );
                 }
+            } else if (def.type === 'counter_ctu') {
+                if (!hasDoneOutput) continue;
+                const ctuTag = getCtuTag(comp);
+                const preset = Number(comp.props?.preset);
+                const ctuPreset = Number.isFinite(preset) && preset > 0 ? preset : 10;
+                const ctuCountConditions = resolveSignalAddresses(comp.id, 'count');
+                const counterRung = new LadderRung([
+                    ...buildConditionInstructions(ctuCountConditions),
+                    new LadderInstruction('CTU', [ctuTag, ctuPreset])
+                ]);
+                counterRung.comment = `${comp.props?.label || comp.type} CTU (${ctuPreset})`;
+                program.addRung(counterRung);
 
-                instructions.push(new LadderInstruction('OTE', [actComp.props.address]));
-                const rung = new LadderRung(instructions);
-                rung.comment = `${sensorComp.props.label || sensorComp.type} -> ${actComp.props.label || actComp.type}`;
-                program.addRung(rung);
-                generatedOutputs.add(actComp.props.address);
+                for (const target of outTargets) {
+                    addOutputRung(
+                        [`${ctuTag}/DN`],
+                        target.address,
+                        `${comp.props?.label || comp.type} DN -> ${target.comp.props?.label || target.comp.type}`
+                    );
+                }
             }
         }
 
-        // Generate standalone actuator rungs (no wired sensor, just direct PLC control)
+        // General synthesis for actuator outputs wired to sensors/logic.
         for (const act of actuators) {
             if (generatedOutputs.has(act.address)) continue;
-            // Find any sensor that could logically feed this actuator by address proximity
-            const sensorAddr = sensors.find(s => {
-                const sIdx = parseInt(s.address.match(/\d+$/)?.[0] || '-1');
-                const aIdx = parseInt(act.address.match(/\d+$/)?.[0] || '-1');
+
+            const incoming = incomingByComp.get(act.compId) || [];
+            const conditionAddresses = [];
+            for (const wire of incoming) {
+                const sourceComp = compById.get(wire.fromComp);
+                const sourceDef = sourceComp ? this.registry.get(sourceComp.type) : null;
+                if (!sourceComp || !sourceDef) continue;
+
+                // Timer/counter DN-to-output is handled above with dedicated rungs.
+                if ((sourceDef.type === 'timer_ton' || sourceDef.type === 'counter_ctu') && wire.fromPort === 'done') {
+                    continue;
+                }
+
+                conditionAddresses.push(...resolveSignalAddresses(wire.fromComp, wire.fromPort));
+            }
+
+            const uniqueConditions = dedupe(conditionAddresses);
+            if (uniqueConditions.length) {
+                addOutputRung(uniqueConditions, act.address, `Wired logic -> ${act.label || act.type}`);
+                continue;
+            }
+
+            // Fallback: pair sensor and actuator with matching terminal index.
+            const sensorMatch = sensors.find(s => {
+                const sIdx = parseInt(s.address.match(/\d+$/)?.[0] || '-1', 10);
+                const aIdx = parseInt(act.address.match(/\d+$/)?.[0] || '-1', 10);
                 return sIdx >= 0 && aIdx >= 0 && sIdx === aIdx;
             });
-            if (sensorAddr) {
-                program.addRung(new LadderRung([
-                    new LadderInstruction('XIC', [sensorAddr.address]),
-                    new LadderInstruction('OTE', [act.address])
-                ]));
+
+            if (sensorMatch) {
+                addOutputRung([sensorMatch.address], act.address, `${sensorMatch.label} -> ${act.label || act.type}`);
             } else {
-                // Direct enable rung (always on when system runs)
-                program.addRung(new LadderRung([
-                    new LadderInstruction('XIO', ['I:0/0']),
-                    new LadderInstruction('OTE', [act.address])
-                ]));
+                addOutputRung([], act.address, `System enable -> ${act.label || act.type}`);
             }
-            generatedOutputs.add(act.address);
         }
 
         this.setActiveLadderProgram(program);
-        console.log('[PLC] Ladder synced:', program.rungs.length, 'rungs from', sensors.length, 'sensors +', actuators.length, 'actuators');
+        console.log('[PLC] Ladder synced:', program.rungs.length, 'rungs from', sensors.length, 'sensors +', actuators.length, 'actuators +', logicBlocks.length, 'logic blocks');
     }
 
     toggleLadderEditor() {
