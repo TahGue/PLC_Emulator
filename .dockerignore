@@ -1,0 +1,11 @@
+.git
+.gitignore
+backend
+docs
+monitoring
+notebooks
+scripts
+.github
+*.md
+*.yml
+*.yaml

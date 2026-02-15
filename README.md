@@ -19,13 +19,13 @@ All libraries used are free and open source.
 
 Use this path if you just want to see the emulator in action immediately.
 
-1. **Serve the frontend**
+1. **Start the full stack in containers**
 
    ```bash
-   python3 -m http.server 8000
+   docker compose up --build
    ```
 
-2. Open `http://localhost:8000/index.html`
+2. Open `http://localhost:8080`
 3. Click **Simulate** → **START**
 4. In **Failure Injection**, enable **Sensor Drift**
 5. In **Attack Simulation Lab**, enable **DoS / Packet Flood**
@@ -244,7 +244,7 @@ The ladder program is automatically generated from the visual layout:
 
 ```
                     ┌──────────────────────────────────────────────────┐
-                    │              Browser (localhost:8000)              │
+                    │              Browser (localhost:8080)              │
                     │                                                    │
                     │  ┌──────────┐  ┌──────────────┐  ┌─────────────┐ │
                     │  │  Layout   │  │   Attack      │  │  Training   │ │
@@ -311,7 +311,7 @@ PLC_Emulator/
 ├── telemetry-client.js      # Frontend client for backend API + SSE
 ├── app.js                   # Main application controller (integrates all modules)
 ├── factory-simulation.js    # Legacy bottle factory simulation (standalone)
-├── docker-compose.yml       # PostgreSQL + analyzer API (Docker)
+├── docker-compose.yml       # Frontend + PostgreSQL + analyzer + security monitor (Docker)
 ├── docker-compose.grafana.yml
 ├── DEMO_GUIDE.md
 ├── CONTRIBUTING.md
@@ -353,13 +353,16 @@ PLC_Emulator/
 
 ## Getting Started
 
-### 1) Serve frontend (no backend needed for attack simulation)
+### 1) Start the complete container stack
 
 ```bash
-python3 -m http.server 8000
+docker compose up --build
 ```
 
-Open `http://localhost:8000/index.html`
+Open:
+- Frontend: `http://localhost:8080`
+- Analyzer API: `http://localhost:8001`
+- Postgres: `localhost:5433`
 
 ### 2) Use the emulator
 
@@ -372,19 +375,17 @@ Open `http://localhost:8000/index.html`
 7. Launch a **Training Scenario** for guided learning challenges with scoring
 8. Use the **LSTM Anomaly Detection** panel for deep-learning-based attack detection (requires backend)
 
-### 3) (Optional) Start backend services
-
-For persistent event storage and ML-backed analysis:
+### 3) (Optional) Run Grafana + Prometheus overlay
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.grafana.yml up --build
 ```
 
-This starts:
-- Postgres on `localhost:5432`
-- Analyzer API on `localhost:8001`
+This adds:
+- Prometheus on `http://localhost:9090`
+- Grafana on `http://localhost:3000` (`admin` / `admin`)
 
-### 4) (Optional) Run vision + security sidecars
+### 4) (Optional) Run vision sidecar tooling
 
 ```bash
 # Train model (good images only)
@@ -398,9 +399,6 @@ python backend/scripts/evaluate_mvtec_model.py --dataset-root <MVTecRoot> --cate
 
 # Feed camera/model outputs to backend
 python backend/scripts/vision_camera_simulator.py --dataset-root <MVTecRoot> --category bottle --artifact-path backend/models/mvtec_feature_model.pkl --include-good --loop
-
-# Feed security lane (simulate mode)
-python backend/scripts/network_security_monitor.py --mode simulate --loop
 
 # Inject attack traffic
 python backend/scripts/network_attack_injector.py --target-host 127.0.0.1 --target-port 502 --duration-seconds 8 --burst-rate 120 --payload-mode modbus-illegal-function --check-analyzer --require-security-flag --report-json backend/logs/network_attack_report.json
@@ -595,7 +593,7 @@ LSTMAutoencoder(
 ### Common Issues
 1. **Components not rendering**: Ensure browser supports SVG + ES6; check console (F12) for errors
 2. **Attacks have no effect**: Simulation must be running (Simulate mode + Start)
-3. **Backend shows OFFLINE**: Run `docker compose up --build` and verify `http://localhost:8001/health` (backend is optional for attack simulation)
+3. **Backend shows OFFLINE**: Run `docker compose up --build` and verify `http://localhost:8001/health`
 4. **Anomaly panel shows "not loaded"**: Backend must be running with the LSTM model at the `LSTM_MODEL_PATH` location
 5. **Performance Issues**: Close other browser tabs; reduce number of active attacks or failures
 6. **Layout not saving**: Use Export Layout button to save as JSON file

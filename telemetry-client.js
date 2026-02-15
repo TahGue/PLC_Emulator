@@ -1,7 +1,14 @@
 class TelemetryClient {
-    constructor(baseUrl = 'http://localhost:8001') {
-        this.baseUrl = baseUrl;
+    constructor(baseUrl = null) {
+        this.baseUrl = baseUrl || this.resolveBaseUrl();
         this.timeoutMs = 2000;
+    }
+
+    resolveBaseUrl() {
+        if (typeof window !== 'undefined' && window.location) {
+            return `${window.location.protocol}//${window.location.hostname}:8001`;
+        }
+        return 'http://localhost:8001';
     }
 
     async checkHealth() {
